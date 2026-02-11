@@ -98,7 +98,7 @@ client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
   if (!isOwner(interaction.user.id)) 
-    return interaction.reply({ content:"You cannot use this command.", ephemeral:true });
+    return interaction.reply({ content:"You cannot use this command.", flags:64 });
 
   const { commandName } = interaction;
 
@@ -107,26 +107,27 @@ client.on("interactionCreate", async interaction => {
     if (commandName === "list") {
       const channel = interaction.options.getChannel("channel");
       if (!channel || channel.type !== ChannelType.GuildText)
-        return interaction.reply({ content:"Invalid channel", ephemeral:true });
+        return interaction.reply({ content:"Invalid channel", flags:64 });
 
       data.listChannelId = channel.id;
       saveData();
 
-      await interaction.reply({ content:`✅ List channel set to ${channel.name} and KOS list posted!`, ephemeral:true });
+      // reply immediately
+      interaction.reply({ content:`✅ List channel set to ${channel.name} and KOS list posted!`, flags:64 });
 
-      // Immediately post the full KOS list
-      await updateListMessage();
+      // fire-and-forget
+      updateListMessage();
 
     // --- /submission ---
     } else if (commandName === "submission") {
       const channel = interaction.options.getChannel("channel");
       if (!channel || channel.type !== ChannelType.GuildText)
-        return interaction.reply({ content:"Invalid channel", ephemeral:true });
+        return interaction.reply({ content:"Invalid channel", flags:64 });
 
       data.submissionChannelId = channel.id;
       saveData();
 
-      interaction.reply({ content:`✅ Submission channel set to ${channel.name}`, ephemeral:true });
+      interaction.reply({ content:`✅ Submission channel set to ${channel.name}`, flags:64 });
 
     // --- /panel ---
     } else if (commandName === "panel") {
@@ -141,16 +142,19 @@ client.on("interactionCreate", async interaction => {
         .setColor(0xff0000)
         .setFooter({ text: "KOS System by shadd/aren" });
 
-      interaction.reply({ embeds:[embed], ephemeral:true });
+      interaction.reply({ embeds:[embed], flags:64 });
     }
   } catch (err) {
     console.error(err);
-    interaction.reply({ content:"❌ An error occurred", ephemeral:true });
+    // try to reply only if not already replied
+    if (!interaction.replied && !interaction.deferred) {
+      interaction.reply({ content:"❌ An error occurred", flags:64 });
+    }
   }
 });
 
 // --- READY ---
-client.once("ready", () => {
+client.once("clientReady", () => {
   console.log(`Logged in as ${client.user.tag}`);
   // Background update if list already exists
   updateListMessage();
