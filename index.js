@@ -59,7 +59,7 @@ function generateKosMessage() {
   return msg;
 }
 
-// --- UPDATE KOS LIST (async, fire-and-forget) ---
+// --- UPDATE KOS LIST (async) ---
 function updateListMessage() {
   if (!data.listChannelId) return;
   client.channels.fetch(data.listChannelId).then(channel => {
@@ -70,22 +70,12 @@ function updateListMessage() {
     if (data.listMessageId) {
       channel.messages.fetch(data.listMessageId).then(oldMsg => {
         if (oldMsg) return oldMsg.edit(msgContent);
-        channel.send(msgContent).then(newMsg => {
-          data.listMessageId = newMsg.id;
-          saveData();
-        }).catch(()=>{});
+        channel.send(msgContent).then(newMsg => { data.listMessageId = newMsg.id; saveData(); }).catch(()=>{});
       }).catch(()=>{
-        // old message missing, send new
-        channel.send(msgContent).then(newMsg => {
-          data.listMessageId = newMsg.id;
-          saveData();
-        }).catch(()=>{});
+        channel.send(msgContent).then(newMsg => { data.listMessageId = newMsg.id; saveData(); }).catch(()=>{});
       });
     } else {
-      channel.send(msgContent).then(newMsg => {
-        data.listMessageId = newMsg.id;
-        saveData();
-      }).catch(()=>{});
+      channel.send(msgContent).then(newMsg => { data.listMessageId = newMsg.id; saveData(); }).catch(()=>{});
     }
   }).catch(()=>{});
 }
@@ -93,19 +83,6 @@ function updateListMessage() {
 // --- HELPERS ---
 function isOwner(id) {
   return id === OWNER_ID;
-}
-
-function tryAdd(targetType, name, secondary) {
-  if (targetType === "player") {
-    if (data.players.find(p=>p.name===name && p.username===secondary)) return { success:false, message:"Player already exists" };
-    data.players.push({ name, username: secondary });
-  } else if (targetType==="clan") {
-    if (data.clans.find(c=>c.name===name && c.region.toLowerCase()===secondary.toLowerCase())) return { success:false, message:"Clan already exists" };
-    data.clans.push({ name, region: secondary });
-  }
-  saveData();
-  updateListMessage(); // ⚡ fire-and-forget
-  return { success:true };
 }
 
 // --- SLASH COMMANDS ---
@@ -116,7 +93,7 @@ client.on("interactionCreate", interaction => {
   const { commandName } = interaction;
 
   try {
-    if (commandName==="channellist") {
+    if (commandName==="list") {
       const channel = interaction.options.getChannel("channel");
       if (!channel || channel.type !== ChannelType.GuildText)
         return interaction.reply({ content:"Invalid channel", flags:64 });
@@ -124,13 +101,10 @@ client.on("interactionCreate", interaction => {
       data.listChannelId = channel.id;
       saveData();
 
-      // ⚡ Reply immediately
       interaction.reply({ content:`✅ List channel set to ${channel.name}`, flags:64 });
+      updateListMessage(); // fire-and-forget
 
-      // update in background
-      updateListMessage();
-
-    } else if (commandName==="channelsubmission") {
+    } else if (commandName==="submission") {
       const channel = interaction.options.getChannel("channel");
       if (!channel || channel.type !== ChannelType.GuildText)
         return interaction.reply({ content:"Invalid channel", flags:64 });
@@ -138,8 +112,31 @@ client.on("interactionCreate", interaction => {
       data.submissionChannelId = channel.id;
       saveData();
 
-      // reply immediately
       interaction.reply({ content:`✅ Submission channel set to ${channel.name}`, flags:64 });
+
+    } else if (commandName==="panel") {
+      // reply with your instructions
+      const panelMessage = `
+**KOS Submission System**
+This bot organizes submissions for YX players and clans onto the KOS list, keeping everything tracked efficiently.
+
+**Players**
+* To add players, use the command ^kos add or ^ka 
+* When adding players, place the name before the username 
+Example:
+^kos add poison poisonrebuild
+^ka poison poisonrebuild
+
+**Clans**
+* To add clans, use the command ^kos clan add or ^kca 
+* When adding clans, place the name before the region and use the short region code 
+Example:
+^kos clan add yx eu
+^kca yx eu
+
+Follow the instructions carefully to avoid duplicates.
+      `;
+      interaction.reply({ content: panelMessage, flags:64 });
     }
   } catch {
     interaction.reply({ content:"❌ An error occurred", flags:64 });
@@ -149,7 +146,7 @@ client.on("interactionCreate", interaction => {
 // --- READY ---
 client.once("clientReady", () => {
   console.log(`Logged in as ${client.user.tag}`);
-  updateListMessage(); // background only
+  updateListMessage(); // background
 });
 
 // --- LOGIN ---
