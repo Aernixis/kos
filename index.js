@@ -1,229 +1,132 @@
-const { 
-  Client, GatewayIntentBits, Partials, 
-  SlashCommandBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder,
-  StringSelectMenuBuilder, Routes
-} = require('discord.js');
+const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } = require('discord.js');
 const fs = require('fs');
-const { REST } = require('@discordjs/rest');
-const express = require('express');
 
-const allowedUserId = '1283217337084018749'; // only this ID can run panel and setlistchannel
+// ---------- CONFIG ----------
+const BOT_TOKEN = 'YOUR_BOT_TOKEN'; // replace
+const CLIENT_ID = 'YOUR_CLIENT_ID'; // replace with your bot's application ID
+const GUILD_ID = 'YOUR_GUILD_ID';   // replace if registering guild commands
+const BOT_PREFIXES = ['^kos add', '^ka'];
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+// ---------- LOAD DATA ----------
+const dataFile = './data.json';
+let data = { players: [], submissionChannel: null, listChannel: null };
 
-// ---------- Load or create data.json ----------
-let data = { listChannelId: null, players: [], clans: [] };
-if (fs.existsSync('./data.json')) {
-  data = JSON.parse(fs.readFileSync('./data.json'));
+if (fs.existsSync(dataFile)) {
+  data = JSON.parse(fs.readFileSync(dataFile, 'utf8'));
 } else {
-  fs.writeFileSync('./data.json', JSON.stringify(data, null, 2));
+  fs.writeFileSync(dataFile, JSON.stringify(data, null, 2));
 }
 
-// ---------- REGISTER SLASH COMMANDS ----------
-const commands = [
-  new SlashCommandBuilder()
-    .setName('setlistchannel')
-    .setDescription('Set the channel where the list will be posted')
-    .addChannelOption(option => option
-      .setName('channel')
-      .setDescription('Select a channel')
-      .setRequired(true)
-    ),
-  new SlashCommandBuilder()
-    .setName('panel')
-    .setDescription('Post the submission panel')
-].map(cmd => cmd.toJSON());
+// ---------- CLIENT ----------
+const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
 
-const rest = new REST({ version: '10' }).setToken(process.env.BOT_TOKEN);
+// ---------- HELPERS ----------
+function saveData() {
+  fs.writeFileSync(dataFile, JSON.stringify(data, null, 2));
+}
 
-client.once('ready', async () => {
-  console.log(`Logged in as ${client.user.tag}`);
+function isDuplicatePlayer(name, username) {
+  return data.players.some(p => p.name.toLowerCase() === name.toLowerCase() || p.username.toLowerCase() === username.toLowerCase());
+}
 
-  try {
-    console.log('Started refreshing application (/) commands.');
-    await rest.put(
-      Routes.applicationCommands(client.user.id),
-      { body: commands }
-    );
-    console.log('Successfully reloaded application (/) commands.');
-  } catch (error) {
-    console.error(error);
-  }
-});
-
-// ---------- EVENT HANDLER ----------
-client.on('interactionCreate', async interaction => {
-
-  // ---------- Slash Commands ----------
-  if (interaction.isChatInputCommand()) {
-
-    // --- SET LIST CHANNEL ---
-    if (interaction.commandName === 'setlistchannel') {
-      if (interaction.user.id !== allowedUserId) return interaction.reply({ content: '❌ You cannot run this command.', ephemeral: true });
-
-      const channel = interaction.options.getChannel('channel');
-      try {
-        data.listChannelId = channel.id;
-        fs.writeFileSync('./data.json', JSON.stringify(data, null, 2));
-
-        await interaction.reply({ content: `✅ List channel set to ${channel}`, ephemeral: true });
-
-        // Update list immediately
-        updateList();
-      } catch (err) {
-        console.error(err);
-        if (!interaction.replied)
-          await interaction.reply({ content: '❌ Error setting channel.', ephemeral: true });
-      }
-    }
-
-    // --- PANEL ---
-    if (interaction.commandName === 'panel') {
-      if (interaction.user.id !== allowedUserId) return interaction.reply({ content: '❌ You cannot run this command.', ephemeral: true });
-
-      const selectMenu = new StringSelectMenuBuilder()
-        .setCustomId('submitType')
-        .setPlaceholder('Select Player or Clan')
-        .addOptions([
-          { label: 'Player', value: 'player' },
-          { label: 'Clan', value: 'clan' }
-        ]);
-
-      const row = new ActionRowBuilder().addComponents(selectMenu);
-
-      await interaction.reply({
-        content: '📋 Submission Panel - choose Player or Clan:',
-        components: [row],
-        ephemeral: false
-      });
-    }
-  }
-
-  // ---------- Dropdown Selections ----------
-  if (interaction.isStringSelectMenu() && interaction.customId === 'submitType') {
-    const choice = interaction.values[0];
-
-    if (choice === 'player') {
-      const modal = new ModalBuilder()
-        .setCustomId('playerModal')
-        .setTitle('Submit Player');
-
-      const nameInput = new TextInputBuilder()
-        .setCustomId('name')
-        .setLabel('Name')
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true);
-
-      const usernameInput = new TextInputBuilder()
-        .setCustomId('username')
-        .setLabel('Username')
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true);
-
-      modal.addComponents(
-        new ActionRowBuilder().addComponents(nameInput),
-        new ActionRowBuilder().addComponents(usernameInput)
-      );
-
-      await interaction.showModal(modal);
-    }
-
-    if (choice === 'clan') {
-      const modal = new ModalBuilder()
-        .setCustomId('clanModal')
-        .setTitle('Submit Clan');
-
-      const regionInput = new TextInputBuilder()
-        .setCustomId('region')
-        .setLabel('Region (EU or NA)')
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true);
-
-      const nameInput = new TextInputBuilder()
-        .setCustomId('name')
-        .setLabel('Clan Name')
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true);
-
-      modal.addComponents(
-        new ActionRowBuilder().addComponents(regionInput),
-        new ActionRowBuilder().addComponents(nameInput)
-      );
-
-      await interaction.showModal(modal);
-    }
-  }
-
-  // ---------- Modal Submissions ----------
-  if (interaction.isModalSubmit()) {
-    if (interaction.customId === 'playerModal') {
-      const name = interaction.fields.getTextInputValue('name');
-      const username = interaction.fields.getTextInputValue('username');
-
-      data.players.push({ name, username });
-      data.players.sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }));
-
-      fs.writeFileSync('./data.json', JSON.stringify(data, null, 2));
-
-      await interaction.reply({ content: `✅ Added ${name} : ${username} to the list!`, ephemeral: true });
-      updateList();
-    }
-
-    if (interaction.customId === 'clanModal') {
-      const region = interaction.fields.getTextInputValue('region').toUpperCase();
-      const name = interaction.fields.getTextInputValue('name');
-
-      data.clans.push({ region, name });
-
-      // Sort: EU first, then NA, each alphabetically
-      data.clans.sort((a, b) => {
-        if (a.region !== b.region) return a.region === 'EU' ? -1 : 1;
-        return a.name.localeCompare(b.name, 'en', { sensitivity: 'base' });
-      });
-
-      fs.writeFileSync('./data.json', JSON.stringify(data, null, 2));
-
-      await interaction.reply({ content: `✅ Added clan ${name} (${region})!`, ephemeral: true });
-      updateList();
-    }
-  }
-
-});
-
-// ---------- Function to update list ----------
-async function updateList() {
-  if (!data.listChannelId) return;
-
-  const channel = await client.channels.fetch(data.listChannelId).catch(() => null);
+async function updateListChannel() {
+  if (!data.listChannel) return;
+  const channel = await client.channels.fetch(data.listChannel).catch(() => null);
   if (!channel) return;
 
-  let listContent = '**Players:**\n';
-  data.players.forEach(p => {
-    listContent += `${p.name} : ${p.username}\n`;
-  });
+  const listText = data.players.length === 0 
+    ? 'No players on KOS yet.' 
+    : data.players.map(p => `• **${p.name}** (${p.username})`).join('\n');
 
-  listContent += '\n**Clans:**\n';
-  data.clans.forEach(c => {
-    listContent += `${c.region} » ${c.name}\n`;
-  });
+  // Delete previous messages in list channel
+  const messages = await channel.messages.fetch({ limit: 10 });
+  messages.forEach(msg => msg.delete().catch(() => {}));
 
-  let lastMessage;
-  try {
-    const messages = await channel.messages.fetch({ limit: 10 });
-    lastMessage = messages.find(m => m.author.id === client.user.id);
-  } catch {}
-
-  if (lastMessage) {
-    lastMessage.edit(listContent).catch(() => {});
-  } else {
-    channel.send(listContent).catch(() => {});
-  }
+  channel.send(`**Current KOS Players:**\n${listText}`).catch(() => {});
 }
 
-// ---------- Express server for uptime ----------
-const app = express();
-app.get('/', (req, res) => res.send('Bot is alive!'));
-app.listen(3000, () => console.log('Web server running on port 3000'));
+// ---------- MESSAGE HANDLER ----------
+client.on('messageCreate', async (message) => {
+  if (message.author.bot) return;
+  if (message.channel.id !== data.submissionChannel) return;
 
-// ---------- Login ----------
-client.login(process.env.BOT_TOKEN);
+  const content = message.content.trim();
+  const prefixUsed = BOT_PREFIXES.find(p => content.toLowerCase().startsWith(p));
+  if (!prefixUsed) return;
+
+  const args = content.slice(prefixUsed.length).trim().split(/\s+/);
+  if (args[0]?.toLowerCase() !== 'player' || args.length < 3) {
+    const reply = await message.reply('❌ Usage: ^kos add player <name> <username>');
+    setTimeout(() => { message.delete().catch(() => {}); reply.delete().catch(() => {}); }, 5000);
+    return;
+  }
+
+  const [, name, username] = args;
+
+  if (isDuplicatePlayer(name, username)) {
+    const reply = await message.reply('❌ This player is already on KOS.');
+    setTimeout(() => { message.delete().catch(() => {}); reply.delete().catch(() => {}); }, 5000);
+    return;
+  }
+
+  // Add player
+  data.players.push({ name, username });
+  saveData();
+
+  const reply = await message.reply(`✅ Player **${name}** (${username}) added to KOS.`);
+  setTimeout(() => { message.delete().catch(() => {}); reply.delete().catch(() => {}); }, 5000);
+
+  // Update list channel
+  await updateListChannel();
+});
+
+// ---------- SLASH COMMANDS ----------
+client.on('ready', async () => {
+  console.log(`Logged in as ${client.user.tag}`);
+
+  const commands = [
+    new SlashCommandBuilder()
+      .setName('channelsubmission')
+      .setDescription('Set the channel for KOS submissions')
+      .addChannelOption(option =>
+        option.setName('channel')
+              .setDescription('Choose the submission channel')
+              .setRequired(true)
+      ),
+    new SlashCommandBuilder()
+      .setName('channellist')
+      .setDescription('Set the channel where the KOS list is posted')
+      .addChannelOption(option =>
+        option.setName('channel')
+              .setDescription('Choose the list channel')
+              .setRequired(true)
+      )
+  ].map(cmd => cmd.toJSON());
+
+  const rest = new REST({ version: '10' }).setToken(BOT_TOKEN);
+  await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
+});
+
+client.on('interactionCreate', async interaction => {
+  if (!interaction.isCommand()) return;
+
+  const { commandName, options } = interaction;
+
+  if (commandName === 'channelsubmission') {
+    const channel = options.getChannel('channel');
+    data.submissionChannel = channel.id;
+    saveData();
+    await interaction.reply({ content: `✅ Submission channel set to ${channel}`, ephemeral: true });
+  }
+
+  if (commandName === 'channellist') {
+    const channel = options.getChannel('channel');
+    data.listChannel = channel.id;
+    saveData();
+    await updateListChannel();
+    await interaction.reply({ content: `✅ List channel set to ${channel}`, ephemeral: true });
+  }
+});
+
+// ---------- LOGIN ----------
+client.login(BOT_TOKEN);
