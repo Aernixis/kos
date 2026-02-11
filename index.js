@@ -1,255 +1,175 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, Partials, EmbedBuilder, PermissionsBitField, ActionRowBuilder, ButtonBuilder, ButtonStyle, Events } = require('discord.js');
-
-const OWNER_ID = '1283217337084018749';
-const PREFIX = '^';
-
-// Memory storage
-let kosList = {
-    regular: [
-        { name: '1U_0I', username: '1U_0I' },
-        { name: '—043—', username: 'lennoxtownmonkey15' },
-        { name: '0liver', username: 'mm2_1love19' },
-        { name: '999_kayden', username: '999_kayden' },
-        { name: '999_lemacaque', username: '999_lemacaque' },
-        { name: 'Afterburn', username: 'Fangxburn' },
-        { name: 'Akiren', username: 'Artem_274912' },
-        { name: 'Amazingboy2382', username: 'Amazingboy2382' },
-        { name: 'anton_raton', username: 'anton_raton' },
-        { name: 'arsonguy', username: 'Gamingx_gaming' },
-        { name: 'Atomic', username: 'Bobby_JordanCR' },
-        { name: 'Atomic', username: 'zioles123665' },
-        { name: 'BENJI', username: 'Senj_77' },
-        { name: 'CG_Jun', username: 'Juns_shrine' },
-        { name: 'COOLSKELETON95', username: 'CoolSkeleton95_J' },
-        { name: 'Duperamr7', username: 'Duperamr7' },
-        { name: 'Elsanti', username: 'Suscriproll' },
-        { name: 'Erasi_Asy', username: 'Erasi_Asy' },
-        { name: 'Esebas2345', username: 'Esebas2345' },
-        { name: 'epaxit', username: 'epaxit' },
-        { name: 'eye', username: 'FAWAX921' },
-        { name: 'Friday_UAEban', username: 'EyesWiThered' },
-        { name: 'holi98cclllll', username: 'holi98cclllll' },
-        { name: 'HoWitzer', username: 'Frandfrork' },
-        { name: 'I_atemytable', username: 'henkiespo' },
-        { name: 'IceBreaker', username: 'GlebUA6' },
-        { name: 'IL1US', username: 'vlad1357909090' },
-        { name: 'ItsGoingDown', username: 'ItsGoingDown' },
-        { name: 'Jayce', username: 'jayce_devs' },
-        { name: 'Jerry', username: 'dark_reaperxy' },
-        { name: 'Jhu96796ii', username: 'Jhu96796ii' },
-        { name: 'Jonion', username: 'GohansannKid' },
-        { name: 'Koshka_Nika', username: 'Xv13600' },
-        { name: 'Leo', username: 'BOOK9915' },
-        { name: 'LordOfCycles', username: 'LordOfCycles' },
-        { name: 'Lilhoneylover', username: 'Lilhoneylover' },
-        { name: 'lshshcbfr', username: 'lshshcbfr' },
-        { name: 'Mab/Yosh', username: 'Mab/Yosh' },
-        { name: 'megarandom77', username: 'megarandom77' },
-        { name: 'milkvey64', username: 'milkvey64' },
-        { name: 'Nowhere', username: 'MehmeT_003100' },
-        { name: 'PARK_P12MI', username: 'le_PAINfou7' },
-        { name: 'Polaris', username: 'PolarisFR' },
-        { name: 'RR_bf', username: 'RR_bf' },
-        { name: 'RR_yori', username: 'RR_yori' },
-        { name: 'raga', username: 'raga' },
-        { name: 'RASHKA', username: 'Slowzyy86' },
-        { name: 'Rtd_Zidox', username: 'Zidox_7' },
-        { name: 'Saibot_xMeddy', username: 'vlad0k_i' },
-        { name: 'shairaxn', username: 'shairaxn' },
-        { name: 'sousoune81100', username: 'sousoune81100' },
-        { name: 'Spitfire', username: 'Therealwarlock1' },
-        { name: 'STN_An1', username: 'ana_011528' },
-        { name: 'Susmogus264', username: 'Susmogus264' },
-        { name: 'TheBlueRay', username: 'ElSanti0026' },
-        { name: 'uruma', username: 'uruma' },
-        { name: 'Valorantussvintus', username: 'Valorantussvintus' },
-        { name: 'Yassen_Kun', username: 'yaseenvx' },
-        { name: 'hamad', username: 'hamad' },
-        { name: 'vagg', username: 'vagg' },
-        { name: 'cawaigirl', username: 'CoolLitleG1rl' },
-        { name: 'sairpluto', username: 'sairpluto' },
-        { name: 'Sohee_macho', username: 'Armandonar' },
-        { name: '67321', username: 'Xdd332166' },
-        { name: 'Shairaxn', username: 'Shairaxn' },
-        { name: 'Pingvinyasha_2', username: 'Pingvinyasha_2' },
-        { name: '3mkhsin59', username: '3mkhsin59' },
-        { name: 'sin', username: 'Flircher' },
-        { name: 'Frederick', username: 'lalala123123222' },
-        { name: 'laziz', username: 'sobirovLaziz_010' }
-    ],
-    priority: [
-        { name: 'Rtd_Zidox', username: 'Rtd_Zidox' },
-        { name: 'Wezah', username: 'Wezah' },
-        { name: 'RASHKA', username: 'RASHKA' },
-        { name: 'Spitfire', username: 'Spitfire' },
-        { name: 'Rekt', username: '@primalflick2024' },
-        { name: 'smile', username: 'smile' },
-        { name: 'icewraith', username: 'icewraith' }
-    ],
-    clans: [
-        'EU»XI','EU»RR','EU»ROTA','EU»RTD','EU»TCK','EU»PARK','EU»TV','EU»RDR','EU»NOTA','EU»STS','EU»ZD',
-        'NA»TSA','NA»CSR/CDR','NA»STN','NA»DTA','NA»SH','NA»ATK'
-    ]
-};
-
-// In-memory message references for updating
-let messagesRef = {
-    regular: null,
-    priority: null,
-    clans: null
-};
-
-let submissionChannel = null;
-let listChannel = null;
-
+const { Client, GatewayIntentBits, Partials, EmbedBuilder } = require('discord.js');
 const client = new Client({
-    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent
+    ],
     partials: [Partials.Channel]
 });
 
-// Helper to sort
-function sortPlayers(arr) {
-    return arr.sort((a, b) => a.name.localeCompare(b.name));
+const OWNER_ID = '1283217337084018749';
+let submissionChannelId = null;
+let listChannelId = null;
+
+let kosData = {
+    regular: [],
+    priority: [],
+    clans: []
+};
+
+// Utility functions
+function sortAndFormat() {
+    const regularSorted = kosData.regular.sort((a,b)=>a.name.localeCompare(b.name));
+    const prioritySorted = kosData.priority.sort((a,b)=>a.name.localeCompare(b.name));
+    const clansSorted = kosData.clans.sort((a,b)=>a.name.localeCompare(b.name));
+
+    const formatEntries = arr => arr.map(e => `${e.name} : ${e.username || e.region}`).join('\n') || 'None';
+
+    return {
+        regular: `\`\`\`\n${formatEntries(regularSorted)}\n\`\`\``,
+        priority: `\`\`\`\n${formatEntries(prioritySorted)}\n\`\`\``,
+        clans: `\`\`\`\n${formatEntries(clansSorted)}\n\`\`\``
+    };
 }
 
-// Helper to build list text
-function buildListText() {
-    let regularText = '```';
-    sortPlayers(kosList.regular).forEach(p => regularText += `\n${p.name} : ${p.username}`);
-    regularText += '\n```';
-
-    let priorityText = '```';
-    sortPlayers(kosList.priority).forEach(p => priorityText += `\n${p.name} : ${p.username}`);
-    priorityText += '\n```';
-
-    let clansText = '```' + kosList.clans.sort().join('\n') + '```';
-
-    return { regularText, priorityText, clansText };
+async function updateListMessages(channel) {
+    const formatted = sortAndFormat();
+    await channel.send({ embeds: [
+        new EmbedBuilder()
+            .setTitle('KOS List - Players')
+            .setDescription(formatted.regular)
+            .setColor(0xFF0000)
+    ]});
+    await channel.send({ embeds: [
+        new EmbedBuilder()
+            .setTitle('KOS List - Priority Players')
+            .setDescription(formatted.priority)
+            .setColor(0xFF0000)
+    ]});
+    await channel.send({ embeds: [
+        new EmbedBuilder()
+            .setTitle('KOS List - Clans')
+            .setDescription(formatted.clans)
+            .setColor(0xFF0000)
+    ]});
 }
 
-// Update list messages
-async function updateListMessages() {
-    if (!listChannel) return;
-    const { regularText, priorityText, clansText } = buildListText();
-    try {
-        if (!messagesRef.regular) messagesRef.regular = await listChannel.send(regularText);
-        else await messagesRef.regular.edit(regularText);
+// Event: Ready
+client.on('ready', () => {
+    console.log(`Logged in as ${client.user.tag}`);
+});
 
-        if (!messagesRef.priority) messagesRef.priority = await listChannel.send(priorityText);
-        else await messagesRef.priority.edit(priorityText);
+// Message Create (prefix commands)
+client.on('messageCreate', async msg => {
+    if (msg.author.bot) return;
 
-        if (!messagesRef.clans) messagesRef.clans = await listChannel.send(clansText);
-        else await messagesRef.clans.edit(clansText);
-    } catch (err) {
-        console.error(err);
+    const content = msg.content.trim();
+    const parts = content.split(/\s+/);
+    const prefix = parts[0];
+
+    // Helper for ping confirmation
+    async function confirmPing(success, text) {
+        const reply = await msg.channel.send({ content: `<@${msg.author.id}> ${text}` });
+        setTimeout(() => reply.delete().catch(()=>{}), 3000);
     }
-}
 
-// Owner check
-function isOwner(userId) {
-    return userId === OWNER_ID;
-}
+    // Add player
+    if (['^ka','^kos'].includes(prefix) && (parts[1] === 'add' || prefix === '^ka')) {
+        let [cmd, subcmd, name, username] = parts;
+        if(prefix === '^ka') { name = parts[1]; username = parts[2]; }
+        if(!name || !username) return confirmPing(false, 'Player unable to be added.');
+        // Check duplicates
+        if(kosData.regular.find(p=>p.name===name)) return confirmPing(false,'Player unable to be added.');
+        kosData.regular.push({ name, username });
+        confirmPing(true,'Player added!');
+        if(listChannelId) {
+            const channel = await client.channels.fetch(listChannelId);
+            updateListMessages(channel);
+        }
+    }
 
-// Command handler for prefix
-client.on('messageCreate', async message => {
-    if (!message.content.startsWith(PREFIX) || message.author.bot) return;
-    if (!isOwner(message.author.id)) return;
+    // Remove player
+    if (['^kr','^kos'].includes(prefix) && (parts[1] === 'remove' || prefix === '^kr')) {
+        let [cmd, subcmd, name, username] = parts;
+        if(prefix === '^kr') { name = parts[1]; username = parts[2]; }
+        if(!name) return confirmPing(false,'Player unable to be removed.');
+        const idx = kosData.regular.findIndex(p=>p.name===name);
+        if(idx===-1) return confirmPing(false,'Player unable to be removed.');
+        kosData.regular.splice(idx,1);
+        confirmPing(true,'Player removed!');
+        if(listChannelId) {
+            const channel = await client.channels.fetch(listChannelId);
+            updateListMessages(channel);
+        }
+    }
 
-    const args = message.content.slice(PREFIX.length).trim().split(/ +/);
-    const command = args.shift().toLowerCase();
+    // Add clan
+    if(['^kca','^kos'].includes(prefix) && (parts[1]==='clan' && parts[2]==='add' || prefix==='^kca')) {
+        let name = prefix==='^kca'?parts[1]:parts[3];
+        let region = prefix==='^kca'?parts[2]:parts[4];
+        if(!name||!region) return confirmPing(false,'Clan unable to be added.');
+        if(kosData.clans.find(c=>c.name===name)) return confirmPing(false,'Clan unable to be added.');
+        kosData.clans.push({ name, region });
+        confirmPing(true,'Clan added!');
+        if(listChannelId) {
+            const channel = await client.channels.fetch(listChannelId);
+            updateListMessages(channel);
+        }
+    }
 
-    // Player add/remove
-    if (command === 'kos' || command === 'ka' || command === 'kr' || command === 'kca' || command === 'kcr') {
-        let action = '';
-        let type = '';
-        if (command === 'kos') action = args[0], type = args[1]; 
-        else if (command === 'ka') { action = 'add'; type = 'player'; }
-        else if (command === 'kr') { action = 'remove'; type = 'player'; }
-        else if (command === 'kca') { action = 'add'; type = 'clan'; }
-        else if (command === 'kcr') { action = 'remove'; type = 'clan'; }
-
-        try {
-            if (type === 'player' || type === undefined) {
-                let name = args[action === 'add' ? 0 : 0];
-                let username = args[action === 'add' ? 1 : 1];
-                if (action === 'add') kosList.regular.push({ name, username });
-                else kosList.regular = kosList.regular.filter(p => !(p.name === name && p.username === username));
-            }
-            if (type === 'clan' || type === undefined) {
-                let name = args[0];
-                let region = args[1];
-                let clanName = `${name} » ${region}`;
-                if (action === 'add') kosList.clans.push(clanName);
-                else kosList.clans = kosList.clans.filter(c => c !== clanName);
-            }
-            // Ping and auto-delete
-            const reply = await message.channel.send(`${action === 'add' ? 'Player/Clan added!' : 'Player/Clan removed!'}`);
-            setTimeout(() => reply.delete(), 3000);
-            setTimeout(() => message.delete(), 3000);
-
-            await updateListMessages();
-        } catch (err) {
-            console.error(err);
+    // Remove clan
+    if(['^kcr','^kos'].includes(prefix) && (parts[1]==='clan' && parts[2]==='remove' || prefix==='^kcr')) {
+        let name = prefix==='^kcr'?parts[1]:parts[3];
+        if(!name) return confirmPing(false,'Clan unable to be removed.');
+        const idx = kosData.clans.findIndex(c=>c.name===name);
+        if(idx===-1) return confirmPing(false,'Clan unable to be removed.');
+        kosData.clans.splice(idx,1);
+        confirmPing(true,'Clan removed!');
+        if(listChannelId) {
+            const channel = await client.channels.fetch(listChannelId);
+            updateListMessages(channel);
         }
     }
 });
 
 // Slash commands
-client.on(Events.InteractionCreate, async interaction => {
-    if (!interaction.isChatInputCommand()) return;
-    if (!isOwner(interaction.user.id)) return;
+client.on('interactionCreate', async interaction => {
+    if(!interaction.isChatInputCommand()) return;
 
-    const { commandName } = interaction;
-
-    if (commandName === 'panel') {
-        try {
-            if (interaction.guild) {
-                await interaction.channel.send({ content: 'https://i.imgur.com/aV9NbA7.png' });
-                const embed = new EmbedBuilder()
-                    .setTitle('KOS Submission System')
-                    .setDescription(`This bot organizes LBG players and clans onto the KOS list for YX members.
-                    
-Players
-* To add players, use the command ^kos add or ^ka
-* When adding players, place the name before the username
-Example:
-^kos add poison poisonrebuild
-^ka poison poisonrebuild
-* To remove players, use the command ^kos remove or ^kr
-* Removing players follows the same format as adding them
-Example:
-^kos remove poison poisonrebuild
-^kr poison poisonrebuild
-Clans
-* To add clans, use the command ^kos clan add or ^kca
-* When adding clans, place the name before the region and use the short region code
-Example:
-^kos clan add yx eu
-^kca yx eu
-* To remove clans, use the command ^kos clan remove or ^kcr
-* Removing clans follows the same format as adding them
-Example:
-^kos clan remove yx eu
-^kcr yx eu
-Thank you for being apart of YX!`)
-                    .setColor(0xFF0000);
-                await interaction.channel.send({ embeds: [embed] });
-                await interaction.reply({ content: 'Panel posted!', ephemeral: true });
-            }
-        } catch (err) { console.error(err); }
-    } else if (commandName === 'list') {
-        if (!listChannel) listChannel = interaction.channel;
-        await updateListMessages();
-        await interaction.reply({ content: 'KOS list posted/updated!', ephemeral: true });
-    } else if (commandName === 'submission') {
-        if (!submissionChannel) submissionChannel = interaction.channel;
-        await interaction.reply({ content: 'Submission channel set!', ephemeral: true });
+    if(interaction.commandName === 'panel') {
+        if(interaction.user.id !== OWNER_ID) return interaction.reply({ content:'You are not allowed to use this.', ephemeral:true });
+        // Send GIF embed
+        await interaction.channel.send({ embeds: [
+            new EmbedBuilder()
+                .setTitle('KOS Tutorial GIF')
+                .setImage('https://i.imgur.com/aV9NbA7.png')
+                .setColor(0xFF0000)
+        ]});
+        // Send panel embed
+        await interaction.channel.send({ embeds: [
+            new EmbedBuilder()
+                .setTitle('KOS Submission System')
+                .setDescription(`This bot organizes LBG players and clans onto the KOS list for YX members.\n\nPlayers\n* To add players, use the command ^kos add or ^ka\n* When adding players, place the name before the username\nExample:\n^kos add poison poisonrebuild\n^ka poison poisonrebuild\n* To remove players, use the command ^kos remove or ^kr\n* Removing players follows the same format as adding them\nExample:\n^kos remove poison poisonrebuild\n^kr poison poisonrebuild\nClans\n* To add clans, use the command ^kos clan add or ^kca\n* When adding clans, place the name before the region and use the short region code\nExample:\n^kos clan add yx eu\n^kca yx eu\n* To remove clans, use the command ^kos clan remove or ^kcr\n* Removing clans follows the same format as adding them\nExample:\n^kos clan remove yx eu\n^kcr yx eu\nThank you for being apart of YX!`)
+                .setColor(0xFF0000)
+        ]});
+        await interaction.reply({ content: 'Panel posted!', ephemeral:true });
     }
-});
 
-client.once(Events.ClientReady, () => {
-    console.log(`Logged in as ${client.user.tag}`);
+    if(interaction.commandName === 'list') {
+        if(interaction.user.id !== OWNER_ID) return interaction.reply({ content:'You are not allowed to use this.', ephemeral:true });
+        if(!listChannelId) return interaction.reply({ content:'List channel not set.', ephemeral:true });
+        const channel = await client.channels.fetch(listChannelId);
+        updateListMessages(channel);
+        await interaction.reply({ content:'KOS list updated!', ephemeral:true });
+    }
+
+    if(interaction.commandName === 'submission') {
+        if(interaction.user.id !== OWNER_ID) return interaction.reply({ content:'You are not allowed to use this.', ephemeral:true });
+        submissionChannelId = interaction.channelId;
+        await interaction.reply({ content:`Submission channel set to <#${submissionChannelId}>`, ephemeral:true });
+    }
 });
 
 // Login
