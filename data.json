@@ -1,9 +1,6 @@
 {
-  "listChannelId": null,
-  "listMessageId": null,
+  "submissionChannel": null,
+  "listChannel": null,
   "players": [],
-  "clans": {
-    "EU": [],
-    "NA": []
-  }
+  "clans": []
 }
