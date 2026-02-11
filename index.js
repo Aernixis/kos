@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, Partials, ChannelType } = require("discord.js");
+const { Client, GatewayIntentBits, Partials, ChannelType, EmbedBuilder } = require("discord.js");
 const fs = require("fs");
 const path = require("path");
 
@@ -72,10 +72,8 @@ async function updateListMessage() {
       try {
         const oldMsg = await channel.messages.fetch(data.listMessageId);
         if (oldMsg) return await oldMsg.edit(msgContent);
-        const newMsg = await channel.send(msgContent);
-        data.listMessageId = newMsg.id;
-        saveData();
       } catch {
+        // old message not found, send new one
         const newMsg = await channel.send(msgContent);
         data.listMessageId = newMsg.id;
         saveData();
@@ -105,6 +103,7 @@ client.on("interactionCreate", async interaction => {
   const { commandName } = interaction;
 
   try {
+    // --- /list ---
     if (commandName === "list") {
       const channel = interaction.options.getChannel("channel");
       if (!channel || channel.type !== ChannelType.GuildText)
@@ -113,9 +112,12 @@ client.on("interactionCreate", async interaction => {
       data.listChannelId = channel.id;
       saveData();
 
-      await interaction.reply({ content:`✅ List channel set to ${channel.name}`, ephemeral:true });
-      updateListMessage(); // fire-and-forget
+      await interaction.reply({ content:`✅ List channel set to ${channel.name} and KOS list posted!`, ephemeral:true });
 
+      // Immediately post the full KOS list
+      await updateListMessage();
+
+    // --- /submission ---
     } else if (commandName === "submission") {
       const channel = interaction.options.getChannel("channel");
       if (!channel || channel.type !== ChannelType.GuildText)
@@ -126,28 +128,20 @@ client.on("interactionCreate", async interaction => {
 
       interaction.reply({ content:`✅ Submission channel set to ${channel.name}`, ephemeral:true });
 
+    // --- /panel ---
     } else if (commandName === "panel") {
-      const panelMessage = `
-**KOS Submission System**
-This bot organizes submissions for YX players and clans onto the KOS list, keeping everything tracked efficiently.
+      const embed = new EmbedBuilder()
+        .setTitle("KOS Submission System")
+        .setDescription("This bot organizes submissions for YX players and clans onto the KOS list, keeping everything tracked efficiently.")
+        .addFields(
+          { name: "Players", value: "• To add players, use `^kos add` or `^ka`\n• Place the name before the username\nExample:\n^kos add poison poisonrebuild\n^ka poison poisonrebuild" },
+          { name: "Clans", value: "• To add clans, use `^kos clan add` or `^kca`\n• Place the name before the region using the short region code\nExample:\n^kos clan add yx eu\n^kca yx eu" },
+          { name: "Notes", value: "Follow the instructions carefully to avoid duplicates." }
+        )
+        .setColor(0xff0000)
+        .setFooter({ text: "KOS System by shadd/aren" });
 
-**Players**
-* To add players, use the command ^kos add or ^ka 
-* When adding players, place the name before the username 
-Example:
-^kos add poison poisonrebuild
-^ka poison poisonrebuild
-
-**Clans**
-* To add clans, use the command ^kos clan add or ^kca 
-* When adding clans, place the name before the region and use the short region code 
-Example:
-^kos clan add yx eu
-^kca yx eu
-
-Follow the instructions carefully to avoid duplicates.
-      `;
-      interaction.reply({ content: panelMessage, ephemeral:true });
+      interaction.reply({ embeds:[embed], ephemeral:true });
     }
   } catch (err) {
     console.error(err);
@@ -158,7 +152,8 @@ Follow the instructions carefully to avoid duplicates.
 // --- READY ---
 client.once("ready", () => {
   console.log(`Logged in as ${client.user.tag}`);
-  updateListMessage(); // background
+  // Background update if list already exists
+  updateListMessage();
 });
 
 // --- LOGIN ---
