@@ -3,7 +3,7 @@ const fs = require("fs");
 const path = require("path");
 
 const OWNER_ID = "1283217337084018749";
-const OVERRIDE_ROLE = "1412837397607092405"; // role that can remove anything
+const OVERRIDE_ROLE = "1412837397607092405";
 const TOKEN = process.env.BOT_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
@@ -33,7 +33,7 @@ if (fs.existsSync(dataPath)) {
 function saveData() { fs.writeFileSync(dataPath, JSON.stringify(data, null, 2)); }
 function isOwner(id) { return id === OWNER_ID; }
 
-// --- Message generators ---
+// --- Message Generators ---
 function generatePlayerMessage() {
   if (!data.players.length) return "No players in KOS.";
   const sorted = [...data.players].sort((a,b)=>a.name.localeCompare(b.name));
@@ -80,7 +80,7 @@ async function updateMessage(channel, content, messageIdKey) {
   saveData();
 }
 
-// --- Command Helpers ---
+// --- Add/Remove Helpers ---
 function addPlayer(name, username, authorId) {
   if (data.players.find(p => p.name.toLowerCase() === name.toLowerCase())) return false;
   data.players.push({ name, username, addedBy: authorId });
@@ -144,7 +144,6 @@ async function registerCommands() {
 // --- Interaction Handler ---
 client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
-  if (!isOwner(interaction.user.id)) return interaction.reply({ content:"You cannot use this command.", ephemeral:true });
 
   const { commandName } = interaction;
 
@@ -156,42 +155,47 @@ client.on("interactionCreate", async interaction => {
         .addFields(
           {
             name: "Players",
-            value: `To add players, use the command ^kos add or ^ka
-When adding players, place the name before the username
+            value:
+`* To add players, use the command ^kos add or ^ka
+* When adding players, place the name before the username
 Example:
 ^kos add poison poisonrebuild
 ^ka poison poisonrebuild
 
-To remove players, use the command ^kos remove or ^kr
-Removing players follows the same format
+* To remove players, use the command ^kos remove or ^kr
+* Removing players follows the same format as adding them
 Example:
 ^kos remove poison poisonrebuild
 ^kr poison poisonrebuild`
           },
           {
             name: "Clans",
-            value: `To add clans, use the command ^kos clan add or ^kca
-Place the name before the region code
+            value:
+`* To add clans, use the command ^kos clan add or ^kca
+* When adding clans, place the name before the region and use the short region code
 Example:
 ^kos clan add yx eu
 ^kca yx eu
 
-To remove clans, use the command ^kos clan remove or ^kcr
+* To remove clans, use the command ^kos clan remove or ^kcr
+* Removing clans follows the same format as adding them
 Example:
 ^kos clan remove yx eu
 ^kcr yx eu`
           },
-          { name: "Thanks", value: "Thank you for being a part of YX!" }
+          { name: "Thanks", value: "Thank you for being apart of YX!" }
         )
         .setColor(0xff0000)
         .setFooter({ text:"KOS System by shadd/aren" });
 
-      return interaction.reply({ embeds:[embed], ephemeral:true });
+      return interaction.reply({ embeds: [embed], ephemeral: true });
     }
 
     if (commandName === "submission") {
       const channel = interaction.options.getChannel("channel");
-      if (!channel || channel.type !== ChannelType.GuildText) return interaction.reply({ content:"Invalid channel.", ephemeral:true });
+      if (!channel || channel.type !== ChannelType.GuildText)
+        return interaction.reply({ content:"Invalid channel.", ephemeral:true });
+
       data.submissionChannelId = channel.id;
       saveData();
       return interaction.reply({ content:`✅ Submission channel set to ${channel.name}`, ephemeral:true });
@@ -199,10 +203,11 @@ Example:
 
     if (commandName === "list") {
       const channel = interaction.options.getChannel("channel");
-      if (!channel || channel.type !== ChannelType.GuildText) return interaction.reply({ content:"Invalid channel.", ephemeral:true });
+      if (!channel || channel.type !== ChannelType.GuildText)
+        return interaction.reply({ content:"Invalid channel.", ephemeral:true });
+
       data.listChannelId = channel.id;
       saveData();
-
       await interaction.deferReply({ ephemeral:true });
       try {
         await updateListMessages();
@@ -219,13 +224,12 @@ Example:
   }
 });
 
-// --- Message Commands ---
+// --- Submission Commands ---
 client.on("messageCreate", async message => {
   if (message.author.bot) return;
   if (!data.submissionChannelId || message.channel.id !== data.submissionChannelId) return;
 
   const [cmd, ...args] = message.content.trim().split(/\s+/);
-
   const member = message.member;
 
   // Players
@@ -273,7 +277,7 @@ client.once("ready", () => {
   updateListMessages();
 });
 
-// --- Start ---
+// --- Start Bot ---
 (async () => {
   await registerCommands();
   client.login(TOKEN);
