@@ -1,201 +1,146 @@
-console.log("TOKEN loaded:", process.env.TOKEN ? "YES" : "NO");
-
-const {
+import 'dotenv/config';
+import fs from 'fs';
+import {
   Client,
   GatewayIntentBits,
   SlashCommandBuilder,
-  Routes,
   REST,
+  Routes,
   EmbedBuilder,
   PermissionFlagsBits
-} = require("discord.js");
-const fs = require("fs");
+} from 'discord.js';
 
-require("dotenv").config();
+const TOKEN = process.env.TOKEN;
+const GUILD_ID = process.env.GUILD_ID;
 
-const client = new Client({
-  intents: [GatewayIntentBits.Guilds]
-});
-
-const DATA_FILE = "./data.json";
-const STAFF_ROLE_ID = "1412837397607092405";
-
-/* -------------------- DATA -------------------- */
+const DATA_FILE = './data.json';
+const MOD_ROLE_ID = '1412837397607092405';
 
 function loadData() {
-  return JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
+  return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
 }
 
 function saveData(data) {
   fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
 }
 
-/* -------------------- EMBEDS -------------------- */
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent
+  ]
+});
 
-function panelEmbed() {
-  return new EmbedBuilder()
-    .setTitle("KOS Submission System")
-    .setColor(0xff0000)
-    .setDescription(
+/* ---------------- SLASH COMMAND REGISTRATION ---------------- */
+
+const commands = [
+  new SlashCommandBuilder()
+    .setName('panel')
+    .setDescription('Post the KOS submission panel'),
+
+  new SlashCommandBuilder()
+    .setName('submission')
+    .setDescription('Set the submission channel')
+    .addChannelOption(o =>
+      o.setName('channel')
+        .setDescription('Submission channel')
+        .setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
+    .setName('list')
+    .setDescription('Post the KOS list')
+    .addChannelOption(o =>
+      o.setName('channel')
+        .setDescription('List channel')
+        .setRequired(true)
+    )
+].map(c => c.toJSON());
+
+const rest = new REST({ version: '10' }).setToken(TOKEN);
+
+async function registerCommands() {
+  await rest.put(
+    Routes.applicationGuildCommands(client.user.id, GUILD_ID),
+    { body: commands }
+  );
+}
+
+/* ---------------- READY ---------------- */
+
+client.once('ready', async () => {
+  console.log(`Logged in as ${client.user.tag}`);
+  await registerCommands();
+  console.log('Slash commands registered!');
+});
+
+/* ---------------- INTERACTIONS ---------------- */
+
+client.on('interactionCreate', async interaction => {
+  if (!interaction.isChatInputCommand()) return;
+
+  try {
+    const data = loadData();
+
+    if (interaction.commandName === 'submission') {
+      const channel = interaction.options.getChannel('channel');
+      data.submissionChannelId = channel.id;
+      saveData(data);
+      await interaction.reply({ content: `✅ Submission channel set to ${channel}`, ephemeral: true });
+    }
+
+    if (interaction.commandName === 'list') {
+      const channel = interaction.options.getChannel('channel');
+      data.listChannelId = channel.id;
+      saveData(data);
+
+      await channel.send('📋 **Regular KOS Players**');
+      await channel.send('⚠️ **Priority KOS**');
+      await channel.send('🏷️ **KOS Clans**');
+
+      await interaction.reply({ content: `✅ KOS list posted in ${channel}`, ephemeral: true });
+    }
+
+    if (interaction.commandName === 'panel') {
+      const embed = new EmbedBuilder()
+        .setTitle('KOS Submission System')
+        .setDescription(
 `This bot organizes submissions for YX players and clans onto the KOS list.
 
 **Players**
 • To add players, use \`^kos add\` or \`^ka\`
-• When adding players, place the name before the username
+• Place the name before the username
 
-Example:
+**Example**
 \`^kos add poison poisonrebuild\`
-\`^ka poison poisonrebuild\`
 
 • To remove players, use \`^kos remove\` or \`^kr\`
 
 **Clans**
 • To add clans, use \`^kos clan add\` or \`^kca\`
-• Place the name before the region (short code)
+• Name before region (short code)
 
-Example:
+**Example**
 \`^kos clan add yx eu\`
-\`^kca yx eu\`
 
 • To remove clans, use \`^kos clan remove\` or \`^kcr\`
 
 Thank you for being apart of YX!`
-    );
-}
+        )
+        .setColor(0xff0000);
 
-function listEmbed(title, items, formatter) {
-  return new EmbedBuilder()
-    .setTitle(title)
-    .setColor(0xff0000)
-    .setDescription(
-      items.length
-        ? items.map(formatter).join("\n")
-        : "*No entries*"
-    );
-}
-
-/* -------------------- LIST UPDATES -------------------- */
-
-async function updateLists(guild) {
-  const data = loadData();
-  if (!data.listChannel) return;
-
-  const channel = await guild.channels.fetch(data.listChannel);
-
-  async function upsertMessage(key, embed) {
-    if (data.messages[key]) {
-      const msg = await channel.messages.fetch(data.messages[key]);
-      await msg.edit({ embeds: [embed] });
-    } else {
-      const msg = await channel.send({ embeds: [embed] });
-      data.messages[key] = msg.id;
-    }
-  }
-
-  data.players.sort((a, b) => a.name.localeCompare(b.name));
-  data.clans.sort((a, b) => a.name.localeCompare(b.name));
-
-  await upsertMessage(
-    "players",
-    listEmbed(
-      "KOS List – Players",
-      data.players,
-      p => `• **${p.name}** (${p.username})`
-    )
-  );
-
-  await upsertMessage(
-    "priority",
-    listEmbed(
-      "KOS List – Priority",
-      data.priority,
-      p => `• **${p.name}** (${p.username})`
-    )
-  );
-
-  await upsertMessage(
-    "clans",
-    listEmbed(
-      "KOS List – Clans",
-      data.clans,
-      c => `• **${c.name.toUpperCase()}** [${c.region.toUpperCase()}]`
-    )
-  );
-
-  saveData(data);
-}
-
-/* -------------------- COMMANDS -------------------- */
-
-const commands = [
-  new SlashCommandBuilder()
-    .setName("submission")
-    .setDescription("Set the submission channel")
-    .addChannelOption(o =>
-      o.setName("channel").setDescription("Channel").setRequired(true)
-    )
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-
-  new SlashCommandBuilder()
-    .setName("list")
-    .setDescription("Set the list channel and post the KOS list")
-    .addChannelOption(o =>
-      o.setName("channel").setDescription("Channel").setRequired(true)
-    )
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-
-  new SlashCommandBuilder()
-    .setName("panel")
-    .setDescription("Post the KOS submission panel")
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
-];
-
-/* -------------------- READY -------------------- */
-
-client.once("ready", async () => {
-  const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
-  await rest.put(
-    Routes.applicationCommands(client.user.id),
-    { body: commands.map(c => c.toJSON()) }
-  );
-
-  console.log(`Logged in as ${client.user.tag}`);
-});
-
-/* -------------------- INTERACTIONS -------------------- */
-
-client.on("interactionCreate", async interaction => {
-  if (!interaction.isChatInputCommand()) return;
-
-  try {
-    await interaction.deferReply({ ephemeral: true });
-
-    const data = loadData();
-
-    if (interaction.commandName === "submission") {
-      data.submissionChannel = interaction.options.getChannel("channel").id;
-      saveData(data);
-      return interaction.editReply("✅ Submission channel set.");
+      await interaction.reply({ embeds: [embed] });
     }
 
-    if (interaction.commandName === "list") {
-      data.listChannel = interaction.options.getChannel("channel").id;
-      data.messages = { players: null, priority: null, clans: null };
-      saveData(data);
-      await updateLists(interaction.guild);
-      return interaction.editReply("✅ List channel set and lists posted.");
-    }
-
-    if (interaction.commandName === "panel") {
-      await interaction.channel.send({ embeds: [panelEmbed()] });
-      return interaction.editReply("✅ Panel posted.");
-    }
   } catch (err) {
     console.error(err);
-    if (!interaction.replied)
-      await interaction.editReply("❌ An error occurred.");
+    if (!interaction.replied) {
+      await interaction.reply({ content: '❌ An error occurred.', ephemeral: true });
+    }
   }
 });
 
-client.login(process.env.TOKEN);
+/* ---------------- LOGIN ---------------- */
 
+client.login(TOKEN);
