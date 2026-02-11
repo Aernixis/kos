@@ -23,12 +23,12 @@ function saveData() {
   fs.writeFileSync(DATA_PATH, JSON.stringify(data, null, 2));
 }
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
 
 // Helper: ensure command args
-function validateArgs(interaction, argsNeeded, usageText) {
-  if (interaction.options._hoistedOptions.length < argsNeeded) {
-    interaction.reply({ content: `Usage: ${usageText}`, ephemeral: true });
+function validateArgs(message, argsNeeded, usageText) {
+  if (message.content.trim().split(/\s+/).length - 1 < argsNeeded) {
+    message.reply(`Usage: ${usageText}`);
     return false;
   }
   return true;
@@ -72,7 +72,7 @@ client.once("clientReady", async () => {
   ]);
 });
 
-// Panel
+// Slash commands
 client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
@@ -110,7 +110,6 @@ client.on("interactionCreate", async interaction => {
     });
   }
 
-  // Channels
   if (commandName === "channelsubmission") {
     const channel = interaction.options.getChannel("channel");
     data.submissionChannel = channel.id;
@@ -138,5 +137,56 @@ client.on("interactionCreate", async interaction => {
   }
 });
 
-// Bot login
+// Prefix commands
+client.on("messageCreate", async message => {
+  if (message.author.bot) return;
+
+  const content = message.content.trim();
+  const args = content.split(/\s+/);
+  
+  // PLAYER ADD
+  if (content.startsWith("^kos add") || content.startsWith("^ka")) {
+    const isKos = content.startsWith("^kos add");
+    const usage = isKos ? "^kos add <name> <username>" : "^ka <name> <username>";
+
+    if (!validateArgs(message, isKos ? 2 : 2, usage)) return;
+
+    const name = args[isKos ? 2 : 1];
+    const username = args[isKos ? 3 : 2];
+
+    if (data.players.find(p => p.name === name && p.username === username)) {
+      message.reply("This person is on KOS.");
+      return;
+    }
+
+    data.players.push({ name, username });
+    saveData();
+
+    await message.delete().catch(() => {});
+    message.channel.send(`Added player: ${name} (${username})`);
+  }
+
+  // CLAN ADD
+  if (content.startsWith("^kos clan add") || content.startsWith("^kca")) {
+    const isKos = content.startsWith("^kos clan add");
+    const usage = isKos ? "^kos clan add <name> <region>" : "^kca <name> <region>";
+
+    if (!validateArgs(message, isKos ? 2 : 2, usage)) return;
+
+    const name = args[isKos ? 3 : 1];
+    const region = args[isKos ? 4 : 2];
+
+    if (data.clans.find(c => c.name === name && c.region === region)) {
+      message.reply("This clan is on KOS.");
+      return;
+    }
+
+    data.clans.push({ name, region });
+    saveData();
+
+    await message.delete().catch(() => {});
+    message.channel.send(`Added clan: ${name} (${region})`);
+  }
+});
+
 client.login(process.env.BOT_TOKEN);
