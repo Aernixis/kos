@@ -1,3 +1,4 @@
+require('dotenv').config();
 const { Client, GatewayIntentBits, Partials, ChannelType, EmbedBuilder, REST, Routes } = require("discord.js");
 const fs = require("fs");
 const path = require("path");
@@ -241,4 +242,5 @@ client.once("clientReady", () => {
   await registerCommands();
 client.login(process.env.TOKEN);
 })();
+
 
