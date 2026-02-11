@@ -140,18 +140,22 @@ client.on('interactionCreate', async interaction => {
             .setDescription(`This bot organizes LBG players and clans onto the KOS list for YX members.\n\n**Players**\n* To add players, use the command ^kos add or ^ka\n* When adding players, place the name before the username\nExample:\n^kos add poison poisonrebuild\n^ka poison poisonrebuild\n* To remove players, use the command ^kos remove or ^kr\n* Removing players follows the same format as adding them\nExample:\n^kos remove poison poisonrebuild\n^kr poison poisonrebuild\n\n**Clans**\n* To add clans, use the command ^kos clan add or ^kca\n* When adding clans, place the name before the region and use the short region code\nExample:\n^kos clan add yx eu\n^kca yx eu\n* To remove clans, use the command ^kos clan remove or ^kcr\n* Removing clans follows the same format as adding them\nExample:\n^kos clan remove yx eu\n^kcr yx eu\n\nThank you for being a part of YX!`)
             .setColor(0xFF0000);
 
-        await interaction.deferReply({ ephemeral: true });
-        await interaction.followUp({ embeds: [gifEmbed] });
-        await interaction.followUp({ embeds: [tutorialEmbed] });
+        // Send both embeds at once
+        await interaction.reply({ embeds: [gifEmbed, tutorialEmbed] });
     }
 
     // ---------------- LIST ----------------
     if(interaction.commandName === 'list') {
-        if(interaction.user.id !== OWNER_ID) return interaction.reply({ content:'You are not allowed to use this.', ephemeral:true });
-        if(!listChannelId) return interaction.reply({ content:'List channel not set.', ephemeral:true });
+        if(interaction.user.id !== OWNER_ID)
+            return interaction.reply({ content:'You are not allowed to use this.', ephemeral:true });
+
+        // Set the list channel to the current channel if not already set
+        if(!listChannelId) listChannelId = interaction.channelId;
+
         const channel = await client.channels.fetch(listChannelId);
-        updateListMessages(channel);
-        await interaction.reply({ content:'KOS list updated!', ephemeral:true });
+        await updateListMessages(channel);
+
+        await interaction.reply({ content:`KOS list posted in <#${listChannelId}>`, ephemeral:true });
     }
 
     // ---------------- SUBMISSION ----------------
