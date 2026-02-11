@@ -17,6 +17,8 @@ const client = new Client({
 // --- Data ---
 const dataPath = path.join(__dirname, "data.json");
 let data = {
+  submissionChannelId: null,
+  listChannelId: null,
   playerMessageId: null,
   priorityMessageId: null,
   clanMessageId: null,
@@ -54,9 +56,20 @@ function generateClanMessage() {
   return msg || "No clans in KOS.";
 }
 
-// --- Update messages ---
-async function updateMessage(channel, content, messageIdKey) {
+// --- Update messages in list channel ---
+async function updateListMessages() {
+  if(!data.listChannelId) return;
+  const channel = await client.channels.fetch(data.listChannelId).catch(()=>null);
   if(!channel || channel.type !== ChannelType.GuildText) return;
+
+  await updateMessage(channel, generatePlayerMessage(), "playerMessageId");
+  await updateMessage(channel, generatePriorityMessage(), "priorityMessageId");
+  await updateMessage(channel, generateClanMessage(), "clanMessageId");
+}
+
+// --- Helper to edit or send message ---
+async function updateMessage(channel, content, messageIdKey) {
+  if(!channel) return;
   let message;
   if(data[messageIdKey]){
     try { message = await channel.messages.fetch(data[messageIdKey]); }
@@ -74,8 +87,14 @@ async function updateMessage(channel, content, messageIdKey) {
 async function registerCommands(){
   const commands = [
     new SlashCommandBuilder().setName("panel").setDescription("Shows the KOS panel"),
-    new SlashCommandBuilder().setName("submission").setDescription("Posts the full KOS in this channel"),
-    new SlashCommandBuilder().setName("list").setDescription("Posts/updates all KOS lists in this channel")
+    new SlashCommandBuilder()
+      .setName("submission")
+      .setDescription("Sets the submission channel")
+      .addChannelOption(o=>o.setName("channel").setDescription("Text channel for submissions").setRequired(true)),
+    new SlashCommandBuilder()
+      .setName("list")
+      .setDescription("Sets the list channel for KOS")
+      .addChannelOption(o=>o.setName("channel").setDescription("Text channel for KOS list").setRequired(true))
   ].map(c=>c.toJSON());
 
   const rest = new REST({ version:"10" }).setToken(TOKEN);
@@ -92,8 +111,9 @@ client.on("interactionCreate", async interaction => {
   if(!isOwner(interaction.user.id)) return interaction.reply({ content:"You cannot use this command.", ephemeral:true });
 
   const { commandName } = interaction;
+
   try {
-    if(commandName==="panel"){
+    if(commandName === "panel"){
       const embed = new EmbedBuilder()
         .setTitle("KOS Submission System")
         .setDescription("This bot organizes submissions for YX players and clans onto the KOS list.")
@@ -106,30 +126,33 @@ client.on("interactionCreate", async interaction => {
             name: "Clans",
             value: "• To add clans, use the command `^kos clan add` or `^kca`\n• When adding clans, place the name before the region and use the short region code\nExample:\n^kos clan add yx eu\n^kca yx eu\n\n• To remove clans, use the command `^kos clan remove` or `^kcr`\n• Removing clans follows the same format as adding them\nExample:\n^kos clan remove yx eu\n^kcr yx eu"
           },
-          {
-            name: "Thanks",
-            value: "Thank you for being a part of YX!"
-          }
+          { name: "Thanks", value: "Thank you for being a part of YX!" }
         )
         .setColor(0xff0000)
         .setFooter({ text: "KOS System by shadd/aren" });
-      return interaction.reply({ embeds: [embed], ephemeral: true });
+
+      return interaction.reply({ embeds:[embed], ephemeral:true });
     }
 
-    if(commandName==="submission"){
-      await interaction.deferReply({ ephemeral:true });
-      await updateMessage(interaction.channel, generatePlayerMessage(), "playerMessageId");
-      await updateMessage(interaction.channel, generatePriorityMessage(), "priorityMessageId");
-      await updateMessage(interaction.channel, generateClanMessage(), "clanMessageId");
-      return interaction.editReply({ content:"✅ KOS posted/updated in this channel." });
+    if(commandName === "submission"){
+      const channel = interaction.options.getChannel("channel");
+      if(!channel || channel.type!==ChannelType.GuildText)
+        return interaction.reply({ content:"Invalid channel.", ephemeral:true });
+
+      data.submissionChannelId = channel.id;
+      saveData();
+      return interaction.reply({ content:`✅ Submission channel set to ${channel.name}`, ephemeral:true });
     }
 
-    if(commandName==="list"){
-      await interaction.deferReply({ ephemeral:true });
-      await updateMessage(interaction.channel, generatePlayerMessage(), "playerMessageId");
-      await updateMessage(interaction.channel, generatePriorityMessage(), "priorityMessageId");
-      await updateMessage(interaction.channel, generateClanMessage(), "clanMessageId");
-      return interaction.editReply({ content:"✅ All KOS lists updated in this channel." });
+    if(commandName === "list"){
+      const channel = interaction.options.getChannel("channel");
+      if(!channel || channel.type!==ChannelType.GuildText)
+        return interaction.reply({ content:"Invalid channel.", ephemeral:true });
+
+      data.listChannelId = channel.id;
+      saveData();
+      await updateListMessages();
+      return interaction.reply({ content:`✅ List channel set to ${channel.name} and KOS list posted!`, ephemeral:true });
     }
 
   } catch(err){
@@ -139,9 +162,7 @@ client.on("interactionCreate", async interaction => {
 });
 
 // --- Ready ---
-client.once("ready", () => {
-  console.log(`Logged in as ${client.user.tag}`);
-});
+client.once("ready", () => console.log(`Logged in as ${client.user.tag}`));
 
 // --- Start bot ---
 (async () => {
