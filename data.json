@@ -1,7 +1,7 @@
 {
-  "ownerId": "1283217337084018749",
-  "submissionChannel": null,
-  "listChannel": null,
+  "submissionChannelId": null,
+  "listChannelId": null,
+  "listMessageId": null,
   "players": [],
   "clans": []
 }
