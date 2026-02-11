@@ -1,3 +1,5 @@
+console.log("TOKEN loaded:", process.env.TOKEN ? "YES" : "NO");
+
 const {
   Client,
   GatewayIntentBits,
@@ -196,3 +198,4 @@ client.on("interactionCreate", async interaction => {
 });
 
 client.login(process.env.TOKEN);
+
