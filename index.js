@@ -1,6 +1,8 @@
 const { Client, GatewayIntentBits, Partials, ChannelType, EmbedBuilder, REST, Routes } = require("discord.js");
 const fs = require("fs");
 const path = require("path");
+require('dotenv').config();
+
 
 // === CONFIG ===
 const OWNER_ID = "1283217337084018749";
@@ -237,5 +239,6 @@ client.once("clientReady", () => {
 // === START ===
 (async () => {
   await registerCommands();
-  client.login(TOKEN);
+client.login(process.env.TOKEN);
 })();
+
