@@ -1,7 +1,9 @@
 {
   "submissionChannelId": null,
   "listChannelId": null,
-  "listMessageId": null,
+  "playerMessageId": null,
+  "priorityMessageId": null,
+  "clanMessageId": null,
   "players": [
     {"name":"1U_0I","username":"1U_0I"},
     {"name":"—043—","username":"lennoxtownmonkey15"},
@@ -73,7 +75,6 @@
     {"name":"sin","username":"Flircher"},
     {"name":"Frederick","username":"lalala123123222"},
     {"name":"laziz","username":"sobirovLaziz_010"},
-
     {"name":"Rtd_Zidox","username":""},
     {"name":"Wezah","username":""},
     {"name":"RASHKA","username":""},
@@ -82,23 +83,24 @@
     {"name":"smile","username":""},
     {"name":"icewraith","username":""}
   ],
+  "topPriority": [],
   "clans": [
-    "EU»XI",
-    "EU»RR",
-    "EU»ROTA",
-    "EU»RTD",
-    "EU»TCK",
-    "EU»PARK",
-    "EU»TV",
-    "EU»RDR",
-    "EU»NOTA",
-    "EU»STS",
-    "EU»ZD",
-    "NA»TSA",
-    "NA»CSR/CDR",
-    "NA»STN",
-    "NA»DTA",
-    "NA»SH",
-    "NA»ATK"
+    {"name":"XI","region":"EU"},
+    {"name":"RR","region":"EU"},
+    {"name":"ROTA","region":"EU"},
+    {"name":"RTD","region":"EU"},
+    {"name":"TCK","region":"EU"},
+    {"name":"PARK","region":"EU"},
+    {"name":"TV","region":"EU"},
+    {"name":"RDR","region":"EU"},
+    {"name":"NOTA","region":"EU"},
+    {"name":"STS","region":"EU"},
+    {"name":"ZD","region":"EU"},
+    {"name":"TSA","region":"NA"},
+    {"name":"CSR/CDR","region":"NA"},
+    {"name":"STN","region":"NA"},
+    {"name":"DTA","region":"NA"},
+    {"name":"SH","region":"NA"},
+    {"name":"ATK","region":"NA"}
   ]
 }
