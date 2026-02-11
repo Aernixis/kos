@@ -17,8 +17,6 @@ const client = new Client({
 // --- Data ---
 const dataPath = path.join(__dirname, "data.json");
 let data = {
-  submissionChannelId: null,
-  listChannelId: null,
   listMessageId: null,
   players: [],
   clans: [],
@@ -49,11 +47,9 @@ function generateKosMessage() {
 }
 
 // --- Update KOS list ---
-async function updateListMessage() {
-  if(!data.listChannelId) return;
+async function updateListMessage(channel) {
+  if(!channel || channel.type !== ChannelType.GuildText) return;
   try {
-    const channel = await client.channels.fetch(data.listChannelId);
-    if(!channel || channel.type !== ChannelType.GuildText) return;
     const msgContent = generateKosMessage();
     const chunks = [];
     const chunkSize = 1990;
@@ -76,13 +72,8 @@ async function registerCommands(){
   const commands = [
     new SlashCommandBuilder().setName("panel").setDescription("Shows the KOS panel"),
     new SlashCommandBuilder()
-      .setName("list")
-      .setDescription("Sets the KOS list channel")
-      .addChannelOption(o=>o.setName("channel").setDescription("Text channel for the list").setRequired(true)),
-    new SlashCommandBuilder()
-      .setName("submission")
-      .setDescription("Sets the submission channel")
-      .addChannelOption(o=>o.setName("channel").setDescription("Text channel for submissions").setRequired(true))
+      .setName("update")
+      .setDescription("Posts/updates the KOS list in this channel")
   ].map(c=>c.toJSON());
 
   const rest = new REST({ version:"10" }).setToken(TOKEN);
@@ -96,7 +87,7 @@ async function registerCommands(){
 // --- Interaction handler ---
 client.on("interactionCreate", async interaction => {
   if(!interaction.isChatInputCommand()) return;
-  if(!isOwner(interaction.user.id)) return interaction.reply({ content:"You cannot use this command.", flags:64 });
+  if(!isOwner(interaction.user.id)) return interaction.reply({ content:"You cannot use this command.", ephemeral:true });
 
   const { commandName } = interaction;
   try {
@@ -111,36 +102,24 @@ client.on("interactionCreate", async interaction => {
         )
         .setColor(0xff0000)
         .setFooter({ text:"KOS System by shadd/aren" });
-      return interaction.reply({ embeds:[embed], flags:64 });
+      return interaction.reply({ embeds:[embed], ephemeral:true });
     }
 
-    if(commandName==="list"){
-      const channel = interaction.options.getChannel("channel");
-      if(!channel || channel.type!==ChannelType.GuildText) return interaction.reply({ content:"Invalid channel.", flags:64 });
-      data.listChannelId = channel.id;
-      saveData();
-      await interaction.deferReply({ flags:64 });
-      updateListMessage();
-      return interaction.editReply({ content:`✅ List channel set to ${channel.name} and KOS list posted!` });
+    if(commandName==="update"){
+      await interaction.deferReply({ ephemeral:true });
+      await updateListMessage(interaction.channel);
+      return interaction.editReply({ content:"✅ KOS list updated in this channel." });
     }
 
-    if(commandName==="submission"){
-      const channel = interaction.options.getChannel("channel");
-      if(!channel || channel.type!==ChannelType.GuildText) return interaction.reply({ content:"Invalid channel.", flags:64 });
-      data.submissionChannelId = channel.id;
-      saveData();
-      return interaction.reply({ content:`✅ Submission channel set to ${channel.name}`, flags:64 });
-    }
   } catch(err){
     console.error(err);
-    if(!interaction.replied && !interaction.deferred) interaction.reply({ content:"❌ An error occurred.", flags:64 });
+    if(!interaction.replied && !interaction.deferred) interaction.reply({ content:"❌ An error occurred.", ephemeral:true });
   }
 });
 
 // --- Ready ---
-client.once("clientReady", () => {
+client.once("ready", () => {
   console.log(`Logged in as ${client.user.tag}`);
-  updateListMessage();
 });
 
 // --- Start bot ---
