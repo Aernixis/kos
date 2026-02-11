@@ -1,284 +1,198 @@
-const { Client, GatewayIntentBits, Partials, ChannelType, EmbedBuilder, REST, Routes, SlashCommandBuilder } = require("discord.js");
+const {
+  Client,
+  GatewayIntentBits,
+  SlashCommandBuilder,
+  Routes,
+  REST,
+  EmbedBuilder,
+  PermissionFlagsBits
+} = require("discord.js");
 const fs = require("fs");
-const path = require("path");
 
-const OWNER_ID = "1283217337084018749";
-const OVERRIDE_ROLE = "1412837397607092405";
-const TOKEN = process.env.BOT_TOKEN;
-const CLIENT_ID = process.env.CLIENT_ID;
-const GUILD_ID = process.env.GUILD_ID;
+require("dotenv").config();
 
-// --- Client ---
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
-  partials: [Partials.Channel],
+  intents: [GatewayIntentBits.Guilds]
 });
 
-// --- Data ---
-const dataPath = path.join(__dirname, "data.json");
-let data = {
-  submissionChannelId: null,
-  listChannelId: null,
-  playerMessageId: null,
-  priorityMessageId: null,
-  clanMessageId: null,
-  players: [],
-  clans: [],
-  topPriority: [],
-};
-if (fs.existsSync(dataPath)) {
-  try { data = JSON.parse(fs.readFileSync(dataPath, "utf8")); }
-  catch { console.error("Failed to load data.json, using empty data"); }
-}
-function saveData() { fs.writeFileSync(dataPath, JSON.stringify(data, null, 2)); }
-function isOwner(id) { return id === OWNER_ID; }
+const DATA_FILE = "./data.json";
+const STAFF_ROLE_ID = "1412837397607092405";
 
-// --- Message Generators ---
-function generatePlayerMessage() {
-  if (!data.players.length) return "No players in KOS.";
-  const sorted = [...data.players].sort((a,b)=>a.name.localeCompare(b.name));
-  return "KOS Players:\n\n" + sorted.map(p => p.username ? `${p.name} : ${p.username}` : `${p.name}`).join("\n");
+/* -------------------- DATA -------------------- */
+
+function loadData() {
+  return JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
 }
 
-function generatePriorityMessage() {
-  if (!data.topPriority.length) return "No top priority entries.";
-  return "Top Priority:\n\n" + data.topPriority.join("\n");
+function saveData(data) {
+  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
 }
 
-function generateClanMessage() {
-  if (!data.clans.length) return "No clans in KOS.";
-  const euClans = data.clans.filter(c => c.region.toLowerCase() === "eu").sort((a,b)=>a.name.localeCompare(b.name));
-  const naClans = data.clans.filter(c => c.region.toLowerCase() === "na").sort((a,b)=>a.name.localeCompare(b.name));
-  let msg = "Clans:\n\n";
-  for (const c of euClans) msg += `EU » ${c.name}\n`;
-  for (const c of naClans) msg += `NA » ${c.name}\n`;
-  return msg;
+/* -------------------- EMBEDS -------------------- */
+
+function panelEmbed() {
+  return new EmbedBuilder()
+    .setTitle("KOS Submission System")
+    .setColor(0xff0000)
+    .setDescription(
+`This bot organizes submissions for YX players and clans onto the KOS list.
+
+**Players**
+• To add players, use \`^kos add\` or \`^ka\`
+• When adding players, place the name before the username
+
+Example:
+\`^kos add poison poisonrebuild\`
+\`^ka poison poisonrebuild\`
+
+• To remove players, use \`^kos remove\` or \`^kr\`
+
+**Clans**
+• To add clans, use \`^kos clan add\` or \`^kca\`
+• Place the name before the region (short code)
+
+Example:
+\`^kos clan add yx eu\`
+\`^kca yx eu\`
+
+• To remove clans, use \`^kos clan remove\` or \`^kcr\`
+
+Thank you for being apart of YX!`
+    );
 }
 
-// --- Update List Messages ---
-async function updateListMessages() {
-  if (!data.listChannelId) return;
-  const channel = await client.channels.fetch(data.listChannelId).catch(()=>null);
-  if (!channel || channel.type !== ChannelType.GuildText) return;
-
-  await updateMessage(channel, generatePlayerMessage(), "playerMessageId");
-  await updateMessage(channel, generatePriorityMessage(), "priorityMessageId");
-  await updateMessage(channel, generateClanMessage(), "clanMessageId");
+function listEmbed(title, items, formatter) {
+  return new EmbedBuilder()
+    .setTitle(title)
+    .setColor(0xff0000)
+    .setDescription(
+      items.length
+        ? items.map(formatter).join("\n")
+        : "*No entries*"
+    );
 }
 
-async function updateMessage(channel, content, messageIdKey) {
-  let msg;
-  if (data[messageIdKey]) {
-    try { msg = await channel.messages.fetch(data[messageIdKey]); }
-    catch { data[messageIdKey] = null; }
+/* -------------------- LIST UPDATES -------------------- */
+
+async function updateLists(guild) {
+  const data = loadData();
+  if (!data.listChannel) return;
+
+  const channel = await guild.channels.fetch(data.listChannel);
+
+  async function upsertMessage(key, embed) {
+    if (data.messages[key]) {
+      const msg = await channel.messages.fetch(data.messages[key]);
+      await msg.edit({ embeds: [embed] });
+    } else {
+      const msg = await channel.send({ embeds: [embed] });
+      data.messages[key] = msg.id;
+    }
   }
-  if (msg) await msg.edit(content);
-  else {
-    msg = await channel.send(content);
-    data[messageIdKey] = msg.id;
-  }
-  saveData();
+
+  data.players.sort((a, b) => a.name.localeCompare(b.name));
+  data.clans.sort((a, b) => a.name.localeCompare(b.name));
+
+  await upsertMessage(
+    "players",
+    listEmbed(
+      "KOS List – Players",
+      data.players,
+      p => `• **${p.name}** (${p.username})`
+    )
+  );
+
+  await upsertMessage(
+    "priority",
+    listEmbed(
+      "KOS List – Priority",
+      data.priority,
+      p => `• **${p.name}** (${p.username})`
+    )
+  );
+
+  await upsertMessage(
+    "clans",
+    listEmbed(
+      "KOS List – Clans",
+      data.clans,
+      c => `• **${c.name.toUpperCase()}** [${c.region.toUpperCase()}]`
+    )
+  );
+
+  saveData(data);
 }
 
-// --- Add/Remove Helpers ---
-function addPlayer(name, username, authorId) {
-  if (data.players.find(p => p.name.toLowerCase() === name.toLowerCase())) return false;
-  data.players.push({ name, username, addedBy: authorId });
-  data.players.sort((a,b)=>a.name.localeCompare(b.name));
-  saveData();
-  updateListMessages();
-  return true;
-}
+/* -------------------- COMMANDS -------------------- */
 
-function removePlayer(name, member) {
-  const player = data.players.find(p => p.name.toLowerCase() === name.toLowerCase());
-  if (!player) return false;
-  if (player.addedBy !== member.id && !member.roles.cache.has(OVERRIDE_ROLE)) return "nopermission";
-  data.players = data.players.filter(p => p.name.toLowerCase() !== name.toLowerCase());
-  saveData();
-  updateListMessages();
-  return true;
-}
+const commands = [
+  new SlashCommandBuilder()
+    .setName("submission")
+    .setDescription("Set the submission channel")
+    .addChannelOption(o =>
+      o.setName("channel").setDescription("Channel").setRequired(true)
+    )
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
-function addClan(name, region, authorId) {
-  if (data.clans.find(c => c.name.toLowerCase() === name.toLowerCase() && c.region.toLowerCase() === region.toLowerCase())) return false;
-  data.clans.push({ name, region, addedBy: authorId });
-  data.clans.sort((a,b)=>a.name.localeCompare(b.name));
-  saveData();
-  updateListMessages();
-  return true;
-}
+  new SlashCommandBuilder()
+    .setName("list")
+    .setDescription("Set the list channel and post the KOS list")
+    .addChannelOption(o =>
+      o.setName("channel").setDescription("Channel").setRequired(true)
+    )
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
-function removeClan(name, region, member) {
-  const clan = data.clans.find(c => c.name.toLowerCase() === name.toLowerCase() && c.region.toLowerCase() === region.toLowerCase());
-  if (!clan) return false;
-  if (clan.addedBy !== member.id && !member.roles.cache.has(OVERRIDE_ROLE)) return "nopermission";
-  data.clans = data.clans.filter(c => !(c.name.toLowerCase()===name.toLowerCase() && c.region.toLowerCase()===region.toLowerCase()));
-  saveData();
-  updateListMessages();
-  return true;
-}
+  new SlashCommandBuilder()
+    .setName("panel")
+    .setDescription("Post the KOS submission panel")
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+];
 
-// --- Register Commands ---
-async function registerCommands() {
-  const commands = [
-    new SlashCommandBuilder().setName("panel").setDescription("Shows the KOS panel"),
-    new SlashCommandBuilder()
-      .setName("submission")
-      .setDescription("Sets the submission channel")
-      .addChannelOption(o=>o.setName("channel").setDescription("Text channel for submissions").setRequired(true)),
-    new SlashCommandBuilder()
-      .setName("list")
-      .setDescription("Sets the KOS list channel")
-      .addChannelOption(o=>o.setName("channel").setDescription("Text channel for KOS list").setRequired(true))
-  ].map(c=>c.toJSON());
+/* -------------------- READY -------------------- */
 
-  const rest = new REST({ version:"10" }).setToken(TOKEN);
-  try {
-    console.log("Registering slash commands...");
-    await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
-    console.log("Slash commands registered!");
-  } catch(err) { console.error(err); }
-}
+client.once("ready", async () => {
+  const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
+  await rest.put(
+    Routes.applicationCommands(client.user.id),
+    { body: commands.map(c => c.toJSON()) }
+  );
 
-// --- Interaction Handler ---
+  console.log(`Logged in as ${client.user.tag}`);
+});
+
+/* -------------------- INTERACTIONS -------------------- */
+
 client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
-  const { commandName } = interaction;
-
   try {
-    if (commandName === "panel") {
-      const embed = new EmbedBuilder()
-        .setTitle("KOS Submission System")
-        .setDescription("This bot organizes submissions for YX players and clans onto the KOS list.")
-        .addFields(
-          {
-            name: "Players",
-            value:
-`* To add players, use the command ^kos add or ^ka
-* When adding players, place the name before the username
-Example:
-^kos add poison poisonrebuild
-^ka poison poisonrebuild
+    await interaction.deferReply({ ephemeral: true });
 
-* To remove players, use the command ^kos remove or ^kr
-* Removing players follows the same format as adding them
-Example:
-^kos remove poison poisonrebuild
-^kr poison poisonrebuild`
-          },
-          {
-            name: "Clans",
-            value:
-`* To add clans, use the command ^kos clan add or ^kca
-* When adding clans, place the name before the region and use the short region code
-Example:
-^kos clan add yx eu
-^kca yx eu
+    const data = loadData();
 
-* To remove clans, use the command ^kos clan remove or ^kcr
-* Removing clans follows the same format as adding them
-Example:
-^kos clan remove yx eu
-^kcr yx eu`
-          },
-          { name: "Thanks", value: "Thank you for being apart of YX!" }
-        )
-        .setColor(0xff0000)
-        .setFooter({ text:"KOS System by shadd/aren" });
-
-      return interaction.reply({ embeds: [embed], ephemeral: true });
+    if (interaction.commandName === "submission") {
+      data.submissionChannel = interaction.options.getChannel("channel").id;
+      saveData(data);
+      return interaction.editReply("✅ Submission channel set.");
     }
 
-    if (commandName === "submission") {
-      const channel = interaction.options.getChannel("channel");
-      if (!channel || channel.type !== ChannelType.GuildText)
-        return interaction.reply({ content:"Invalid channel.", ephemeral:true });
-
-      data.submissionChannelId = channel.id;
-      saveData();
-      return interaction.reply({ content:`✅ Submission channel set to ${channel.name}`, ephemeral:true });
+    if (interaction.commandName === "list") {
+      data.listChannel = interaction.options.getChannel("channel").id;
+      data.messages = { players: null, priority: null, clans: null };
+      saveData(data);
+      await updateLists(interaction.guild);
+      return interaction.editReply("✅ List channel set and lists posted.");
     }
 
-    if (commandName === "list") {
-      const channel = interaction.options.getChannel("channel");
-      if (!channel || channel.type !== ChannelType.GuildText)
-        return interaction.reply({ content:"Invalid channel.", ephemeral:true });
-
-      data.listChannelId = channel.id;
-      saveData();
-      await interaction.deferReply({ ephemeral:true });
-      try {
-        await updateListMessages();
-        await interaction.editReply({ content:`✅ List channel set to ${channel.name} and KOS list posted!` });
-      } catch(err) {
-        console.error(err);
-        if (interaction.deferred) await interaction.editReply({ content:"❌ Failed to post KOS list." });
-      }
+    if (interaction.commandName === "panel") {
+      await interaction.channel.send({ embeds: [panelEmbed()] });
+      return interaction.editReply("✅ Panel posted.");
     }
-
-  } catch(err) {
+  } catch (err) {
     console.error(err);
-    if (!interaction.replied && !interaction.deferred) interaction.reply({ content:"❌ An error occurred.", ephemeral:true });
+    if (!interaction.replied)
+      await interaction.editReply("❌ An error occurred.");
   }
 });
 
-// --- Submission Commands ---
-client.on("messageCreate", async message => {
-  if (message.author.bot) return;
-  if (!data.submissionChannelId || message.channel.id !== data.submissionChannelId) return;
-
-  const [cmd, ...args] = message.content.trim().split(/\s+/);
-  const member = message.member;
-
-  // Players
-  if (cmd === "^kos" || cmd === "^ka") {
-    const subcmd = args[0]?.toLowerCase();
-    if (subcmd === "add") {
-      const name = args[1];
-      const username = args[2] || "";
-      if (!name) return message.reply("Provide a player name.");
-      if (addPlayer(name, username, message.author.id)) message.reply(`✅ Added player ${name}`);
-      else message.reply("Player already exists.");
-    }
-    if (subcmd === "remove") {
-      const name = args[1];
-      if (!name) return message.reply("Provide a player name.");
-      const res = removePlayer(name, member);
-      if (res === true) message.reply(`✅ Removed player ${name}`);
-      else if (res === "nopermission") message.reply("❌ You cannot remove this player.");
-      else message.reply("Player not found.");
-    }
-  }
-
-  // Clans
-  if (cmd === "^kca" || cmd === "^kcr" || (cmd === "^kos" && args[0]?.toLowerCase() === "clan")) {
-    const subcmd = args[1]?.toLowerCase() || args[0]?.toLowerCase(); 
-    const name = args[2] || args[1];
-    const region = args[3] || args[2];
-    if (!name || !region) return message.reply("Provide clan name and region.");
-    if (subcmd === "add" || cmd === "^kca") {
-      if (addClan(name, region, message.author.id)) message.reply(`✅ Added clan ${name} (${region})`);
-      else message.reply("Clan already exists.");
-    }
-    if (subcmd === "remove" || cmd === "^kcr") {
-      const res = removeClan(name, region, member);
-      if (res === true) message.reply(`✅ Removed clan ${name} (${region})`);
-      else if (res === "nopermission") message.reply("❌ You cannot remove this clan.");
-      else message.reply("Clan not found.");
-    }
-  }
-});
-
-// --- Ready ---
-client.once("ready", () => {
-  console.log(`Logged in as ${client.user.tag}`);
-  updateListMessages();
-});
-
-// --- Start Bot ---
-(async () => {
-  await registerCommands();
-  client.login(TOKEN);
-})();
+client.login(process.env.TOKEN);
