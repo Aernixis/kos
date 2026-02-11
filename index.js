@@ -2,9 +2,9 @@ const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } = require
 const fs = require('fs');
 
 // ---------- CONFIG ----------
-const BOT_TOKEN = 'YOUR_BOT_TOKEN'; // replace
-const CLIENT_ID = 'YOUR_CLIENT_ID'; // replace with your bot's application ID
-const GUILD_ID = 'YOUR_GUILD_ID';   // replace if registering guild commands
+const BOT_TOKEN = process.env.BOT_TOKEN; // replace
+const CLIENT_ID = '1470922510496436378'; // replace with your bot's application ID
+const GUILD_ID = '1470930306596081699';   // replace if registering guild commands
 const BOT_PREFIXES = ['^kos add', '^ka'];
 
 // ---------- LOAD DATA ----------
@@ -130,3 +130,4 @@ client.on('interactionCreate', async interaction => {
 
 // ---------- LOGIN ----------
 client.login(BOT_TOKEN);
+
