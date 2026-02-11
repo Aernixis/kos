@@ -34,11 +34,9 @@ try {
   console.error("Failed to read data.json, using empty data:", err);
 }
 
-// Save safely (non-blocking)
+// Save safely
 function saveData() {
-  setImmediate(() => {
-    fs.writeFileSync(dataPath, JSON.stringify(data, null, 2));
-  });
+  fs.writeFileSync(dataPath, JSON.stringify(data, null, 2));
 }
 
 // --- KOS LIST GENERATION ---
@@ -111,7 +109,7 @@ async function tryAdd(targetType, name, secondary) {
     data.clans.push({ name, region: secondary });
   }
   saveData();
-  updateListMessage().catch(console.error); // async, non-blocking
+  await updateListMessage(); // ⚡ Await here — this is the reverted behavior
   return { success: true };
 }
 
@@ -131,11 +129,8 @@ client.on("interactionCreate", async interaction => {
       data.listChannelId = channel.id;
       saveData();
 
-      // reply immediately
-      interaction.reply({ content: `✅ List channel set to **${channel.name}**. Updating list...`, flags: 64 });
-
-      // update list in the background
-      updateListMessage().catch(console.error);
+      await updateListMessage(); // ⬅ await ensures message is posted/edited before reply
+      return interaction.reply({ content: `✅ List channel set to **${channel.name}** and KOS list updated.`, flags: 64 });
 
     } else if (commandName === "channelsubmission") {
       const channel = interaction.options.getChannel("channel");
@@ -145,10 +140,11 @@ client.on("interactionCreate", async interaction => {
       data.submissionChannelId = channel.id;
       saveData();
 
-      interaction.reply({ content: `✅ Submission channel set to **${channel.name}**.`, flags: 64 });
+      return interaction.reply({ content: `✅ Submission channel set to **${channel.name}**.`, flags: 64 });
     }
   } catch (err) {
     console.error("Slash command error:", err);
+    return interaction.reply({ content: "❌ An error occurred.", flags: 64 });
   }
 });
 
