@@ -23,6 +23,7 @@ let data = {
   listMessageId: null,
   players: [],
   clans: [],
+  topPriority: [],
 };
 
 // Load existing data.json
@@ -42,13 +43,11 @@ function saveData() {
 // Generate the KOS list message
 function generateKosMessage() {
   let msg = "Kos :\n\nName : Username\n\n";
-  data.players.forEach((player) => {
-    if (player.username) {
-      msg += `${player.name} : ${player.username}\n`;
-    } else {
-      msg += `${player.name}\n`;
-    }
-  });
+  data.players
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .forEach((player) => {
+      msg += player.username ? `${player.name} : ${player.username}\n` : `${player.name}\n`;
+    });
 
   msg += "\n------TOP PRIORITY------\n\n";
   data.topPriority?.forEach((p) => {
@@ -56,41 +55,48 @@ function generateKosMessage() {
   });
 
   msg += "\n–––––– CLANS ––––––\n\n";
-  const euClans = data.clans.filter(c => c.region.toLowerCase() === "eu").sort((a,b) => a.name.localeCompare(b.name));
-  const naClans = data.clans.filter(c => c.region.toLowerCase() === "na").sort((a,b) => a.name.localeCompare(b.name));
+
+  const euClans = data.clans
+    .filter(c => c.region.toLowerCase() === "eu")
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const naClans = data.clans
+    .filter(c => c.region.toLowerCase() === "na")
+    .sort((a, b) => a.name.localeCompare(b.name));
 
   euClans.forEach(c => msg += `EU»${c.name}\n`);
   naClans.forEach(c => msg += `NA»${c.name}\n`);
 
   msg += "\n-# ontop all of these i expect every clan member to be treated the same kos way\n";
   msg += "-# creds (shadd/aren)";
+
   return msg;
 }
 
-// Update the list message
+// Update the KOS list message in the LIST channel
 async function updateListMessage() {
   if (!data.listChannelId) return;
   const channel = await client.channels.fetch(data.listChannelId).catch(() => null);
   if (!channel || channel.type !== ChannelType.GuildText) return;
 
   const msgContent = generateKosMessage();
+
   if (data.listMessageId) {
-    // edit existing
     const msg = await channel.messages.fetch(data.listMessageId).catch(() => null);
     if (msg) return msg.edit(msgContent);
   }
-  // send new
+
+  // Send new message if none exists
   const newMsg = await channel.send(msgContent);
   data.listMessageId = newMsg.id;
   saveData();
 }
 
-// Helper: check owner
+// Check if user is owner
 function isOwner(id) {
   return id === OWNER_ID;
 }
 
-// Helper: add player/clan with retries
+// Add player or clan with retries
 async function tryAdd(targetType, name, secondary, userId) {
   for (let i = 0; i < 3; i++) {
     let success = false;
@@ -99,12 +105,10 @@ async function tryAdd(targetType, name, secondary, userId) {
         return { success: false, message: "This player is already on KOS." };
       }
       data.players.push({ name, username: secondary });
-      data.players.sort((a,b) => a.name.localeCompare(b.name));
+      data.players.sort((a, b) => a.name.localeCompare(b.name));
       saveData();
       await updateListMessage();
-      if (data.players.find(p => p.name === name)) {
-        success = true;
-      }
+      if (data.players.find(p => p.name === name)) success = true;
     } else if (targetType === "clan") {
       if (data.clans.find(c => c.name === name && c.region.toLowerCase() === secondary.toLowerCase())) {
         return { success: false, message: "This clan is already on KOS." };
@@ -112,16 +116,14 @@ async function tryAdd(targetType, name, secondary, userId) {
       data.clans.push({ name, region: secondary });
       saveData();
       await updateListMessage();
-      if (data.clans.find(c => c.name === name && c.region.toLowerCase() === secondary.toLowerCase())) {
-        success = true;
-      }
+      if (data.clans.find(c => c.name === name && c.region.toLowerCase() === secondary.toLowerCase())) success = true;
     }
     if (success) return { success: true };
   }
   return { success: false, message: `<@${userId}> Unable to add ${targetType}, please try again later.` };
 }
 
-// Command handler
+// Message commands
 client.on("messageCreate", async message => {
   if (!message.content.startsWith(PREFIX)) return;
   if (!isOwner(message.author.id)) return;
@@ -133,14 +135,24 @@ client.on("messageCreate", async message => {
   if (cmd === "kos" || cmd === "ka" || cmd === "kr") {
     const subcmd = args.shift()?.toLowerCase();
     if (!subcmd) return message.reply("You're missing a parameter.");
-    
+
     // Add Player
     if (subcmd === "add" || cmd === "ka") {
       const name = args[0];
       const username = args[1];
       if (!name || !username) return message.reply("You're missing a parameter.");
       const res = await tryAdd("player", name, username, message.author.id);
-      return message.reply(res.success ? `Added ${name}` : res.message);
+
+      // Reply only in submission channel
+      if (data.submissionChannelId) {
+        const replyChannel = await client.channels.fetch(data.submissionChannelId).catch(() => null);
+        if (replyChannel && replyChannel.type === ChannelType.GuildText) {
+          replyChannel.send({ content: res.success ? `Player ${name} added.` : res.message, ephemeral: true });
+        }
+      } else {
+        message.reply(res.success ? `Player ${name} added.` : res.message);
+      }
+      return;
     }
 
     // Remove Player
@@ -161,18 +173,28 @@ client.on("messageCreate", async message => {
   if (cmd === "kca" || cmd === "kos" || cmd === "kcr") {
     const subcmd = args.shift()?.toLowerCase();
     if (!subcmd) return message.reply("You're missing a parameter.");
-    
+
     // Add Clan
-    if (subcmd === "clan" && args[0] === "add" || cmd === "kca") {
+    if ((subcmd === "clan" && args[0] === "add") || cmd === "kca") {
       const name = args[1] || args[0];
       const region = args[2] || args[1];
       if (!name || !region) return message.reply("You're missing a parameter.");
       const res = await tryAdd("clan", name, region, message.author.id);
-      return message.reply(res.success ? `Added clan ${name}` : res.message);
+
+      // Reply only in submission channel
+      if (data.submissionChannelId) {
+        const replyChannel = await client.channels.fetch(data.submissionChannelId).catch(() => null);
+        if (replyChannel && replyChannel.type === ChannelType.GuildText) {
+          replyChannel.send({ content: res.success ? `Clan ${name} added.` : res.message, ephemeral: true });
+        }
+      } else {
+        message.reply(res.success ? `Clan ${name} added.` : res.message);
+      }
+      return;
     }
 
     // Remove Clan
-    if (subcmd === "clan" && args[0] === "remove" || cmd === "kcr") {
+    if ((subcmd === "clan" && args[0] === "remove") || cmd === "kcr") {
       const name = args[1] || args[0];
       const region = args[2] || args[1];
       if (!name || !region) return message.reply("You're missing a parameter.");
@@ -186,7 +208,7 @@ client.on("messageCreate", async message => {
   }
 });
 
-// Slash command /channellist
+// Slash commands
 client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
   if (!isOwner(interaction.user.id)) return interaction.reply({ content: "You cannot use this command.", flags: 64 });
@@ -199,7 +221,7 @@ client.on("interactionCreate", async interaction => {
     data.listChannelId = channel.id;
     saveData();
     await updateListMessage();
-    return interaction.reply({ content: `List channel set to ${channel.name}`, flags: 64 });
+    return interaction.reply({ content: `List channel set to ${channel.name} and list posted.`, flags: 64 });
   }
 
   if (interaction.commandName === "channelsubmission") {
@@ -213,7 +235,7 @@ client.on("interactionCreate", async interaction => {
   }
 });
 
-client.once("clientReady", () => {
+client.once("ready", () => {
   console.log(`Logged in as ${client.user.tag}`);
   updateListMessage();
 });
