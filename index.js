@@ -15,7 +15,7 @@ const client = new Client({
 
 const dataPath = path.join(__dirname, "data.json");
 
-// --- DATA MANAGEMENT ---
+// --- DATA ---
 let data = {
   submissionChannelId: null,
   listChannelId: null,
@@ -26,22 +26,22 @@ let data = {
 };
 
 // Safe load
-try {
-  if (fs.existsSync(dataPath)) {
+if (fs.existsSync(dataPath)) {
+  try {
     data = JSON.parse(fs.readFileSync(dataPath, "utf8"));
+  } catch {
+    console.error("Failed to load data.json, using empty data");
   }
-} catch (err) {
-  console.error("Failed to read data.json, using empty data:", err);
 }
 
-// Save function
+// Save
 function saveData() {
   fs.writeFileSync(dataPath, JSON.stringify(data, null, 2));
 }
 
 // --- GENERATE KOS LIST ---
 function generateKosMessage() {
-  const playersSorted = [...data.players].sort((a, b) => a.name.localeCompare(b.name));
+  const playersSorted = [...data.players].sort((a,b)=>a.name.localeCompare(b.name));
   let msg = "Kos :\n\nName : Username\n\n";
   for (const p of playersSorted) msg += p.username ? `${p.name} : ${p.username}\n` : `${p.name}\n`;
 
@@ -49,10 +49,8 @@ function generateKosMessage() {
   for (const p of data.topPriority) msg += `${p}\n`;
 
   msg += "\n–––––– CLANS ––––––\n\n";
-
   const euClans = data.clans.filter(c => c.region.toLowerCase() === "eu").sort((a,b)=>a.name.localeCompare(b.name));
   const naClans = data.clans.filter(c => c.region.toLowerCase() === "na").sort((a,b)=>a.name.localeCompare(b.name));
-
   for (const c of euClans) msg += `EU»${c.name}\n`;
   for (const c of naClans) msg += `NA»${c.name}\n`;
 
@@ -61,36 +59,35 @@ function generateKosMessage() {
   return msg;
 }
 
-// --- UPDATE KOS LIST (non-blocking) ---
-async function updateListMessage() {
+// --- UPDATE KOS LIST (async, fire-and-forget) ---
+function updateListMessage() {
   if (!data.listChannelId) return;
-  let channel;
-  try {
-    channel = await client.channels.fetch(data.listChannelId);
-  } catch {
-    console.warn("List channel not found");
-    return;
-  }
-  if (!channel || channel.type !== ChannelType.GuildText) return;
+  client.channels.fetch(data.listChannelId).then(channel => {
+    if (!channel || channel.type !== ChannelType.GuildText) return;
 
-  const msgContent = generateKosMessage();
+    const msgContent = generateKosMessage();
 
-  if (data.listMessageId) {
-    try {
-      const oldMsg = await channel.messages.fetch(data.listMessageId);
-      if (oldMsg) return oldMsg.edit(msgContent);
-    } catch {
-      console.warn("Previous KOS list message missing, sending new one");
+    if (data.listMessageId) {
+      channel.messages.fetch(data.listMessageId).then(oldMsg => {
+        if (oldMsg) return oldMsg.edit(msgContent);
+        channel.send(msgContent).then(newMsg => {
+          data.listMessageId = newMsg.id;
+          saveData();
+        }).catch(()=>{});
+      }).catch(()=>{
+        // old message missing, send new
+        channel.send(msgContent).then(newMsg => {
+          data.listMessageId = newMsg.id;
+          saveData();
+        }).catch(()=>{});
+      });
+    } else {
+      channel.send(msgContent).then(newMsg => {
+        data.listMessageId = newMsg.id;
+        saveData();
+      }).catch(()=>{});
     }
-  }
-
-  try {
-    const newMsg = await channel.send(msgContent);
-    data.listMessageId = newMsg.id;
-    saveData();
-  } catch (err) {
-    console.error("Failed to send KOS list:", err);
-  }
+  }).catch(()=>{});
 }
 
 // --- HELPERS ---
@@ -98,59 +95,61 @@ function isOwner(id) {
   return id === OWNER_ID;
 }
 
-async function tryAdd(targetType, name, secondary) {
+function tryAdd(targetType, name, secondary) {
   if (targetType === "player") {
-    if (data.players.find(p => p.name === name && p.username === secondary)) return { success: false, message: "Player already exists." };
+    if (data.players.find(p=>p.name===name && p.username===secondary)) return { success:false, message:"Player already exists" };
     data.players.push({ name, username: secondary });
-  } else if (targetType === "clan") {
-    if (data.clans.find(c => c.name === name && c.region.toLowerCase() === secondary.toLowerCase())) return { success: false, message: "Clan already exists." };
+  } else if (targetType==="clan") {
+    if (data.clans.find(c=>c.name===name && c.region.toLowerCase()===secondary.toLowerCase())) return { success:false, message:"Clan already exists" };
     data.clans.push({ name, region: secondary });
   }
   saveData();
-  updateListMessage().catch(console.error); // ⚡ run async in background
-  return { success: true };
+  updateListMessage(); // ⚡ fire-and-forget
+  return { success:true };
 }
 
-// --- SLASH COMMAND HANDLER ---
+// --- SLASH COMMANDS ---
 client.on("interactionCreate", interaction => {
   if (!interaction.isChatInputCommand()) return;
-  if (!isOwner(interaction.user.id)) return interaction.reply({ content: "You cannot use this command.", flags: 64 });
+  if (!isOwner(interaction.user.id)) return interaction.reply({ content:"You cannot use this command.", flags:64 });
 
   const { commandName } = interaction;
 
   try {
-    if (commandName === "channellist") {
+    if (commandName==="channellist") {
       const channel = interaction.options.getChannel("channel");
       if (!channel || channel.type !== ChannelType.GuildText)
-        return interaction.reply({ content: "Invalid channel.", flags: 64 });
+        return interaction.reply({ content:"Invalid channel", flags:64 });
 
       data.listChannelId = channel.id;
       saveData();
 
-      // reply immediately, list update runs in background
-      interaction.reply({ content: `✅ List channel set to **${channel.name}**.`, flags: 64 });
-      updateListMessage().catch(console.error);
+      // ⚡ Reply immediately
+      interaction.reply({ content:`✅ List channel set to ${channel.name}`, flags:64 });
 
-    } else if (commandName === "channelsubmission") {
+      // update in background
+      updateListMessage();
+
+    } else if (commandName==="channelsubmission") {
       const channel = interaction.options.getChannel("channel");
       if (!channel || channel.type !== ChannelType.GuildText)
-        return interaction.reply({ content: "Invalid channel.", flags: 64 });
+        return interaction.reply({ content:"Invalid channel", flags:64 });
 
       data.submissionChannelId = channel.id;
       saveData();
 
-      interaction.reply({ content: `✅ Submission channel set to **${channel.name}**.`, flags: 64 });
+      // reply immediately
+      interaction.reply({ content:`✅ Submission channel set to ${channel.name}`, flags:64 });
     }
-  } catch (err) {
-    console.error("Slash command error:", err);
-    interaction.reply({ content: "❌ An error occurred.", flags: 64 });
+  } catch {
+    interaction.reply({ content:"❌ An error occurred", flags:64 });
   }
 });
 
-// --- BOT READY ---
+// --- READY ---
 client.once("clientReady", () => {
   console.log(`Logged in as ${client.user.tag}`);
-  updateListMessage().catch(console.error); // background only
+  updateListMessage(); // background only
 });
 
 // --- LOGIN ---
