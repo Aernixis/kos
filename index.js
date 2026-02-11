@@ -17,7 +17,9 @@ const client = new Client({
 // --- Data ---
 const dataPath = path.join(__dirname, "data.json");
 let data = {
-  listMessageId: null,
+  playerMessageId: null,
+  priorityMessageId: null,
+  clanMessageId: null,
   players: [],
   clans: [],
   topPriority: [],
@@ -29,51 +31,51 @@ if (fs.existsSync(dataPath)) {
 function saveData() { fs.writeFileSync(dataPath, JSON.stringify(data, null, 2)); }
 function isOwner(id) { return id === OWNER_ID; }
 
-// --- Generate KOS ---
-function generateKosMessage() {
+// --- Generate messages ---
+function generatePlayerMessage() {
   const playersSorted = [...data.players].sort((a,b)=>a.name.localeCompare(b.name));
-  let msg = "Kos :\n\nName : Username\n\n";
+  let msg = "KOS Players:\n\nName : Username\n\n";
   for(const p of playersSorted) msg += p.username ? `${p.name} : ${p.username}\n` : `${p.name}\n`;
-  msg += "\n------TOP PRIORITY------\n\n";
-  for(const p of data.topPriority) msg += `${p}\n`;
-  msg += "\n–––––– CLANS ––––––\n\n";
-  const euClans = data.clans.filter(c=>c.region.toLowerCase()==="eu").sort((a,b)=>a.name.localeCompare(b.name));
-  const naClans = data.clans.filter(c=>c.region.toLowerCase()==="na").sort((a,b)=>a.name.localeCompare(b.name));
-  for(const c of euClans) msg += `EU»${c.name}\n`;
-  for(const c of naClans) msg += `NA»${c.name}\n`;
-  msg += "\n-# ontop all of these i expect every clan member to be treated the same kos way\n";
-  msg += "-# creds (shadd/aren)";
-  return msg;
+  return msg || "No players in KOS.";
 }
 
-// --- Update KOS list ---
-async function updateListMessage(channel) {
+function generatePriorityMessage() {
+  let msg = "Top Priority:\n\n";
+  for(const p of data.topPriority) msg += `${p}\n`;
+  return msg || "No top priority entries.";
+}
+
+function generateClanMessage() {
+  let msg = "Clans:\n\n";
+  const euClans = data.clans.filter(c=>c.region.toLowerCase()==="eu").sort((a,b)=>a.name.localeCompare(b.name));
+  const naClans = data.clans.filter(c=>c.region.toLowerCase()==="na").sort((a,b)=>a.name.localeCompare(b.name));
+  for(const c of euClans) msg += `EU » ${c.name}\n`;
+  for(const c of naClans) msg += `NA » ${c.name}\n`;
+  return msg || "No clans in KOS.";
+}
+
+// --- Update messages ---
+async function updateMessage(channel, content, messageIdKey) {
   if(!channel || channel.type !== ChannelType.GuildText) return;
-  try {
-    const msgContent = generateKosMessage();
-    const chunks = [];
-    const chunkSize = 1990;
-    for(let i=0;i<msgContent.length;i+=chunkSize) chunks.push(msgContent.slice(i,i+chunkSize));
-
-    let firstMessage;
-    if(data.listMessageId){
-      try { firstMessage = await channel.messages.fetch(data.listMessageId); } catch {}
-    }
-    if(firstMessage){ await firstMessage.edit(chunks.shift()); }
-    else { firstMessage = await channel.send(chunks.shift()); data.listMessageId = firstMessage.id; }
-
-    for(const chunk of chunks) await channel.send(chunk);
-    saveData();
-  } catch(err){ console.error("Failed to update KOS list:", err); }
+  let message;
+  if(data[messageIdKey]){
+    try { message = await channel.messages.fetch(data[messageIdKey]); }
+    catch { data[messageIdKey] = null; }
+  }
+  if(message) await message.edit(content);
+  else {
+    message = await channel.send(content);
+    data[messageIdKey] = message.id;
+  }
+  saveData();
 }
 
 // --- Register commands ---
 async function registerCommands(){
   const commands = [
     new SlashCommandBuilder().setName("panel").setDescription("Shows the KOS panel"),
-    new SlashCommandBuilder()
-      .setName("update")
-      .setDescription("Posts/updates the KOS list in this channel")
+    new SlashCommandBuilder().setName("submission").setDescription("Posts the full KOS in this channel"),
+    new SlashCommandBuilder().setName("list").setDescription("Posts/updates all KOS lists in this channel")
   ].map(c=>c.toJSON());
 
   const rest = new REST({ version:"10" }).setToken(TOKEN);
@@ -94,21 +96,40 @@ client.on("interactionCreate", async interaction => {
     if(commandName==="panel"){
       const embed = new EmbedBuilder()
         .setTitle("KOS Submission System")
-        .setDescription("This bot organizes submissions for YX players and clans onto the KOS list, keeping everything tracked efficiently.")
+        .setDescription("This bot organizes submissions for YX players and clans onto the KOS list.")
         .addFields(
-          { name:"Players", value:"• To add players, use `^kos add` or `^ka`\n• Place the name before the username\nExample:\n^kos add poison poisonrebuild\n^ka poison poisonrebuild" },
-          { name:"Clans", value:"• To add clans, use `^kos clan add` or `^kca`\n• Place the name before the region using the short region code\nExample:\n^kos clan add yx eu\n^kca yx eu" },
-          { name:"Notes", value:"Follow the instructions carefully to avoid duplicates." }
+          {
+            name: "Players",
+            value: "• To add players, use the command `^kos add` or `^ka`\n• When adding players, place the name before the username\nExample:\n^kos add poison poisonrebuild\n^ka poison poisonrebuild\n\n• To remove players, use the command `^kos remove` or `^kr`\n• Removing players follows the same format as adding them\nExample:\n^kos remove poison poisonrebuild\n^kr poison poisonrebuild"
+          },
+          {
+            name: "Clans",
+            value: "• To add clans, use the command `^kos clan add` or `^kca`\n• When adding clans, place the name before the region and use the short region code\nExample:\n^kos clan add yx eu\n^kca yx eu\n\n• To remove clans, use the command `^kos clan remove` or `^kcr`\n• Removing clans follows the same format as adding them\nExample:\n^kos clan remove yx eu\n^kcr yx eu"
+          },
+          {
+            name: "Thanks",
+            value: "Thank you for being a part of YX!"
+          }
         )
         .setColor(0xff0000)
-        .setFooter({ text:"KOS System by shadd/aren" });
-      return interaction.reply({ embeds:[embed], ephemeral:true });
+        .setFooter({ text: "KOS System by shadd/aren" });
+      return interaction.reply({ embeds: [embed], ephemeral: true });
     }
 
-    if(commandName==="update"){
+    if(commandName==="submission"){
       await interaction.deferReply({ ephemeral:true });
-      await updateListMessage(interaction.channel);
-      return interaction.editReply({ content:"✅ KOS list updated in this channel." });
+      await updateMessage(interaction.channel, generatePlayerMessage(), "playerMessageId");
+      await updateMessage(interaction.channel, generatePriorityMessage(), "priorityMessageId");
+      await updateMessage(interaction.channel, generateClanMessage(), "clanMessageId");
+      return interaction.editReply({ content:"✅ KOS posted/updated in this channel." });
+    }
+
+    if(commandName==="list"){
+      await interaction.deferReply({ ephemeral:true });
+      await updateMessage(interaction.channel, generatePlayerMessage(), "playerMessageId");
+      await updateMessage(interaction.channel, generatePriorityMessage(), "priorityMessageId");
+      await updateMessage(interaction.channel, generateClanMessage(), "clanMessageId");
+      return interaction.editReply({ content:"✅ All KOS lists updated in this channel." });
     }
 
   } catch(err){
