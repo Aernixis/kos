@@ -1,125 +1,186 @@
-require('dotenv').config();
-const { Client, GatewayIntentBits, Partials, PermissionsBitField } = require('discord.js');
-const fs = require('fs');
-const path = require('path');
+const fs = require("fs");
+const { Client, GatewayIntentBits, Partials, Collection, EmbedBuilder } = require("discord.js");
+require("dotenv").config();
 
-const OWNER_ID = '1283217337084018749';
-const MOD_ROLE_ID = '1412837397607092405';
-const DATA_FILE = path.join(__dirname, 'data.json');
-
-let data = {
-    submissionChannelId: null,
-    listChannelId: null,
-    listMessageIds: { regular: null, priority: null, clans: null },
-    players: [],
-    priority: [],
-    clans: []
-};
-
-// Load data
-if (fs.existsSync(DATA_FILE)) {
-    data = JSON.parse(fs.readFileSync(DATA_FILE));
-}
-
-// Save data
-function saveData() {
-    fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
-}
-
-// Sort helpers
-function sortPlayers(list) {
-    return list.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
-}
-
-function sortClans(list) {
-    return list.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
-}
-
-// Format KOS for text block
-function formatKOS(list) {
-    return '```\n' + list.map(p => p.username ? `${p.name} : ${p.username}` : p.name).join('\n') + '\n```';
-}
-
-function formatPriority(list) {
-    return '```\n' + list.map(p => p.username ? `${p.name} : ${p.username}` : p.name).join('\n') + '\n```';
-}
-
-function formatClans(list) {
-    return '```\n' + list.join('\n') + '\n```';
-}
-
-// Update list messages
-async function updateListMessages(client) {
-    if (!data.listChannelId) return;
-    const channel = await client.channels.fetch(data.listChannelId).catch(()=>null);
-    if (!channel) return;
-
-    // Regular players
-    if (data.listMessageIds.regular) {
-        try {
-            const msg = await channel.messages.fetch(data.listMessageIds.regular);
-            await msg.edit({ content: formatKOS(sortPlayers(data.players)) });
-        } catch (err) { data.listMessageIds.regular = null; }
-    } else {
-        const msg = await channel.send({ content: formatKOS(sortPlayers(data.players)) });
-        data.listMessageIds.regular = msg.id;
-    }
-
-    // Priority
-    if (data.listMessageIds.priority) {
-        try {
-            const msg = await channel.messages.fetch(data.listMessageIds.priority);
-            await msg.edit({ content: formatPriority(sortPlayers(data.priority)) });
-        } catch (err) { data.listMessageIds.priority = null; }
-    } else {
-        const msg = await channel.send({ content: formatPriority(sortPlayers(data.priority)) });
-        data.listMessageIds.priority = msg.id;
-    }
-
-    // Clans
-    if (data.listMessageIds.clans) {
-        try {
-            const msg = await channel.messages.fetch(data.listMessageIds.clans);
-            await msg.edit({ content: formatClans(sortClans(data.clans)) });
-        } catch (err) { data.listMessageIds.clans = null; }
-    } else {
-        const msg = await channel.send({ content: formatClans(sortClans(data.clans)) });
-        data.listMessageIds.clans = msg.id;
-    }
-
-    saveData();
-}
-
-// Create client
 const client = new Client({
-    intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent
-    ]
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+  ],
+  partials: [Partials.Channel],
 });
 
-// Commands handling
-client.on('messageCreate', async message => {
-    if (message.author.bot) return;
-    if (message.author.id !== OWNER_ID) return; // Owner lock
-    const prefix = '^';
-    if (!message.content.startsWith(prefix)) return;
-    const args = message.content.slice(prefix.length).trim().split(/ +/g);
-    const command = args.shift().toLowerCase();
+const OWNER_ID = "1283217337084018749";
+const ADMIN_ROLE = "1412837397607092405";
 
-    // Submission channel lock
-    if (['kos', 'ka', 'kr', 'kca', 'kcr'].includes(command)) {
-        if (data.submissionChannelId && message.channel.id !== data.submissionChannelId) {
-            return message.reply('❌ You can only submit in the submission channel.');
-        }
+let data = {
+  submissionChannelId: null,
+  listChannelId: null,
+  listMessages: { regular: null, priority: null, clans: null },
+  players: [],
+  priority: [],
+  clans: [],
+};
+
+// Load data.json if exists
+if (fs.existsSync("./data.json")) {
+  data = JSON.parse(fs.readFileSync("./data.json", "utf8"));
+}
+
+function saveData() {
+  fs.writeFileSync("./data.json", JSON.stringify(data, null, 2));
+}
+
+function sortAndFormatPlayers(list) {
+  if (!list.length) return "```\nNo players.\n```";
+  const formatted = list
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }))
+    .map((p) => (p.username ? `${p.name} : ${p.username}` : p.name))
+    .join("\n");
+  return "```\n" + formatted + "\n```";
+}
+
+function sortAndFormatClans(list) {
+  if (!list.length) return "```\nNo clans.\n```";
+  const formatted = list.sort().join("\n");
+  return "```\n" + formatted + "\n```";
+}
+
+async function updateListMessages(channel) {
+  if (!channel) return;
+  // Regular players
+  if (data.listMessages.regular) {
+    const msg = await channel.messages.fetch(data.listMessages.regular).catch(() => null);
+    if (msg) await msg.edit({ content: sortAndFormatPlayers(data.players) });
+  } else {
+    const msg = await channel.send({ content: sortAndFormatPlayers(data.players) });
+    data.listMessages.regular = msg.id;
+  }
+
+  // Priority players
+  if (data.listMessages.priority) {
+    const msg = await channel.messages.fetch(data.listMessages.priority).catch(() => null);
+    if (msg) await msg.edit({ content: sortAndFormatPlayers(data.priority) });
+  } else {
+    const msg = await channel.send({ content: sortAndFormatPlayers(data.priority) });
+    data.listMessages.priority = msg.id;
+  }
+
+  // Clans
+  if (data.listMessages.clans) {
+    const msg = await channel.messages.fetch(data.listMessages.clans).catch(() => null);
+    if (msg) await msg.edit({ content: sortAndFormatClans(data.clans) });
+  } else {
+    const msg = await channel.send({ content: sortAndFormatClans(data.clans) });
+    data.listMessages.clans = msg.id;
+  }
+
+  saveData();
+}
+
+// OWNER ONLY middleware
+function isOwner(userId) {
+  return userId === OWNER_ID;
+}
+
+client.on("ready", async () => {
+  console.log(`Logged in as ${client.user.tag}`);
+});
+
+// Handle prefix commands
+client.on("messageCreate", async (message) => {
+  if (message.author.bot) return;
+  if (!isOwner(message.author.id)) return;
+
+  const submissionChannel = data.submissionChannelId;
+  if (submissionChannel && message.channel.id !== submissionChannel) return;
+
+  const args = message.content.trim().split(/\s+/);
+  const command = args.shift().toLowerCase();
+
+  // PLAYER ADD
+  if (command === "^kos" && args[0] === "add" && args.length >= 3) {
+    const name = args[1];
+    const username = args[2];
+    data.players.push({ name, username, submitter: message.author.id });
+    await message.channel.send({ content: "Player added!", fetchReply: true }).then(msg => setTimeout(() => msg.delete(), 3000));
+    updateListMessages(client.channels.cache.get(data.listChannelId));
+    saveData();
+    return;
+  }
+
+  if (command === "^ka" && args.length >= 2) {
+    const name = args[0];
+    const username = args[1];
+    data.players.push({ name, username, submitter: message.author.id });
+    await message.channel.send({ content: "Player added!", fetchReply: true }).then(msg => setTimeout(() => msg.delete(), 3000));
+    updateListMessages(client.channels.cache.get(data.listChannelId));
+    saveData();
+    return;
+  }
+
+  // PLAYER REMOVE
+  if (command === "^kos" && args[0] === "remove" && args.length >= 3) {
+    const name = args[1];
+    const username = args[2];
+    const index = data.players.findIndex(p => p.name === name && p.username === username);
+    if (index !== -1 && (data.players[index].submitter === message.author.id || message.member.roles.cache.has(ADMIN_ROLE))) {
+      data.players.splice(index, 1);
+      await message.channel.send({ content: "Player removed!", fetchReply: true }).then(msg => setTimeout(() => msg.delete(), 3000));
+      updateListMessages(client.channels.cache.get(data.listChannelId));
+      saveData();
     }
+    return;
+  }
 
-    // Panel command
-    if (command === 'panel') {
-        return message.channel.send(
-`KOS Submission System
-This bot organizes submissions for YX players and clans onto the KOS list.
+  if (command === "^kr" && args.length >= 2) {
+    const name = args[0];
+    const username = args[1];
+    const index = data.players.findIndex(p => p.name === name && p.username === username);
+    if (index !== -1 && (data.players[index].submitter === message.author.id || message.member.roles.cache.has(ADMIN_ROLE))) {
+      data.players.splice(index, 1);
+      await message.channel.send({ content: "Player removed!", fetchReply: true }).then(msg => setTimeout(() => msg.delete(), 3000));
+      updateListMessages(client.channels.cache.get(data.listChannelId));
+      saveData();
+    }
+    return;
+  }
+
+  // CLAN ADD
+  if ((command === "^kos" && args[0] === "clan" && args[1] === "add" && args.length >= 4) || (command === "^kca" && args.length >= 2)) {
+    const name = args[args.length - 2];
+    const region = args[args.length - 1];
+    data.clans.push(`${name} » ${region}`);
+    await message.channel.send({ content: "Clan added!", fetchReply: true }).then(msg => setTimeout(() => msg.delete(), 3000));
+    updateListMessages(client.channels.cache.get(data.listChannelId));
+    saveData();
+    return;
+  }
+
+  // CLAN REMOVE
+  if ((command === "^kos" && args[0] === "clan" && args[1] === "remove" && args.length >= 4) || (command === "^kcr" && args.length >= 2)) {
+    const name = args[args.length - 2];
+    const region = args[args.length - 1];
+    const index = data.clans.findIndex(c => c === `${name} » ${region}`);
+    if (index !== -1 && (message.member.roles.cache.has(ADMIN_ROLE))) {
+      data.clans.splice(index, 1);
+      await message.channel.send({ content: "Clan removed!", fetchReply: true }).then(msg => setTimeout(() => msg.delete(), 3000));
+      updateListMessages(client.channels.cache.get(data.listChannelId));
+      saveData();
+    }
+    return;
+  }
+});
+
+// Slash commands
+client.on("interactionCreate", async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+  if (!isOwner(interaction.user.id)) return interaction.reply({ content: "Unauthorized.", ephemeral: true });
+
+  if (interaction.commandName === "panel") {
+    await interaction.reply({
+      content: `**KOS Submission System**\nThis bot organizes LBG players and clans onto the KOS list for YX members.\n
 Players
 * To add players, use the command ^kos add or ^ka
 * When adding players, place the name before the username
@@ -142,79 +203,22 @@ Example:
 Example:
 ^kos clan remove yx eu
 ^kcr yx eu
-Thank you for being apart of YX!`
-        );
-    }
+Thank you for being apart of YX!`,
+    });
+  }
 
-    // Set submission channel
-    if (command === 'submission') {
-        data.submissionChannelId = message.channel.id;
-        saveData();
-        return message.channel.send(`✅ Submission channel set to ${message.channel}`);
-    }
+  if (interaction.commandName === "submission") {
+    data.submissionChannelId = interaction.channelId;
+    saveData();
+    await interaction.reply({ content: `Submission channel set to <#${interaction.channelId}>`, ephemeral: false });
+  }
 
-    // Set list channel
-    if (command === 'list') {
-        data.listChannelId = message.channel.id;
-        saveData();
-        await updateListMessages(client);
-        return message.channel.send(`✅ List channel set to ${message.channel} and KOS list posted!`);
-    }
-
-    // Player add
-    if ((command === 'kos' && args[0] === 'add') || command === 'ka') {
-        if (command === 'kos') args.shift(); // remove 'add' for ^kos add
-        const [name, username] = args;
-        if (!name) return message.reply('❌ Invalid syntax.');
-        data.players.push({ name, username: username || '' });
-        saveData();
-        await updateListMessages(client);
-        return message.channel.send(`✅ Player ${name} added.`);
-    }
-
-    // Player remove
-    if ((command === 'kos' && args[0] === 'remove') || command === 'kr') {
-        if (command === 'kos') args.shift(); // remove 'remove'
-        const [name, username] = args;
-        if (!name) return message.reply('❌ Invalid syntax.');
-        const entry = data.players.find(p => p.name === name && p.username === (username || ''));
-        if (!entry) return message.channel.send('❌ Player not found.');
-        if (message.author.id !== OWNER_ID && message.author.id !== entry.submitter && !message.member.roles.cache.has(MOD_ROLE_ID)) {
-            return message.channel.send('❌ You cannot remove this player.');
-        }
-        data.players = data.players.filter(p => p !== entry);
-        saveData();
-        await updateListMessages(client);
-        return message.channel.send(`✅ Player ${name} removed.`);
-    }
-
-    // Clan add
-    if ((command === 'kos' && args[0] === 'clan' && args[1] === 'add') || command === 'kca') {
-        if (command === 'kos') args.shift(); args.shift(); // remove 'clan add'
-        const [name, region] = args;
-        if (!name || !region) return message.reply('❌ Invalid syntax.');
-        data.clans.push(`${name} » ${region}`);
-        saveData();
-        await updateListMessages(client);
-        return message.channel.send(`✅ Clan ${name} added.`);
-    }
-
-    // Clan remove
-    if ((command === 'kos' && args[0] === 'clan' && args[1] === 'remove') || command === 'kcr') {
-        if (command === 'kos') args.shift(); args.shift(); // remove 'clan remove'
-        const [name, region] = args;
-        if (!name || !region) return message.reply('❌ Invalid syntax.');
-        const clanName = `${name} » ${region}`;
-        const entry = data.clans.find(c => c === clanName);
-        if (!entry) return message.channel.send('❌ Clan not found.');
-        if (message.author.id !== OWNER_ID && !message.member.roles.cache.has(MOD_ROLE_ID)) {
-            return message.channel.send('❌ You cannot remove this clan.');
-        }
-        data.clans = data.clans.filter(c => c !== clanName);
-        saveData();
-        await updateListMessages(client);
-        return message.channel.send(`✅ Clan ${name} removed.`);
-    }
+  if (interaction.commandName === "list") {
+    data.listChannelId = interaction.channelId;
+    saveData();
+    await updateListMessages(interaction.channel);
+    await interaction.reply({ content: `KOS list posted in <#${interaction.channelId}>`, ephemeral: false });
+  }
 });
 
 client.login(process.env.TOKEN);
