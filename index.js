@@ -240,4 +240,6 @@ client.once("ready", () => {
   updateListMessage();
 });
 
-client.login(process.env.TOKEN);
+client.login(process.env.BOT_TOKEN);
+
+
