@@ -1,14 +1,14 @@
-// index.js
 const { Client, GatewayIntentBits, Partials, ChannelType, EmbedBuilder, REST, Routes, SlashCommandBuilder } = require("discord.js");
 const fs = require("fs");
 const path = require("path");
 
 const OWNER_ID = "1283217337084018749";
-const TOKEN = process.env.BOT_TOKEN;
-const CLIENT_ID = process.env.CLIENT_ID; // your bot application ID
-const GUILD_ID = process.env.GUILD_ID;   // your test server ID
 
-// --- Create client ---
+const TOKEN = process.env.BOT_TOKEN;
+const CLIENT_ID = process.env.CLIENT_ID;
+const GUILD_ID = process.env.GUILD_ID;
+
+// --- Client ---
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
   partials: [Partials.Channel],
@@ -24,18 +24,14 @@ let data = {
   clans: [],
   topPriority: [],
 };
-
-// Load or init
 if (fs.existsSync(dataPath)) {
-  try { data = JSON.parse(fs.readFileSync(dataPath, "utf8")); } 
+  try { data = JSON.parse(fs.readFileSync(dataPath, "utf8")); }
   catch { console.error("Failed to load data.json, using empty data"); }
 }
-
 function saveData() { fs.writeFileSync(dataPath, JSON.stringify(data, null, 2)); }
-
-// --- Helpers ---
 function isOwner(id) { return id === OWNER_ID; }
 
+// --- Generate KOS ---
 function generateKosMessage() {
   const playersSorted = [...data.players].sort((a,b)=>a.name.localeCompare(b.name));
   let msg = "Kos :\n\nName : Username\n\n";
@@ -58,53 +54,46 @@ async function updateListMessage() {
   try {
     const channel = await client.channels.fetch(data.listChannelId);
     if(!channel || channel.type !== ChannelType.GuildText) return;
-
     const msgContent = generateKosMessage();
     const chunks = [];
     const chunkSize = 1990;
-    for(let i=0; i<msgContent.length; i+=chunkSize) chunks.push(msgContent.slice(i,i+chunkSize));
+    for(let i=0;i<msgContent.length;i+=chunkSize) chunks.push(msgContent.slice(i,i+chunkSize));
 
     let firstMessage;
     if(data.listMessageId){
-      try { firstMessage = await channel.messages.fetch(data.listMessageId); } 
-      catch {}
+      try { firstMessage = await channel.messages.fetch(data.listMessageId); } catch {}
     }
-
-    if(firstMessage){
-      await firstMessage.edit(chunks.shift());
-    } else {
-      firstMessage = await channel.send(chunks.shift());
-      data.listMessageId = firstMessage.id;
-    }
+    if(firstMessage){ await firstMessage.edit(chunks.shift()); }
+    else { firstMessage = await channel.send(chunks.shift()); data.listMessageId = firstMessage.id; }
 
     for(const chunk of chunks) await channel.send(chunk);
     saveData();
   } catch(err){ console.error("Failed to update KOS list:", err); }
 }
 
-// --- Register slash commands ---
+// --- Register commands ---
 async function registerCommands(){
   const commands = [
     new SlashCommandBuilder().setName("panel").setDescription("Shows the KOS panel"),
     new SlashCommandBuilder()
       .setName("list")
       .setDescription("Sets the KOS list channel")
-      .addChannelOption(option => option.setName("channel").setDescription("Text channel for the list").setRequired(true)),
+      .addChannelOption(o=>o.setName("channel").setDescription("Text channel for the list").setRequired(true)),
     new SlashCommandBuilder()
       .setName("submission")
       .setDescription("Sets the submission channel")
-      .addChannelOption(option => option.setName("channel").setDescription("Text channel for submissions").setRequired(true))
-  ].map(cmd => cmd.toJSON());
+      .addChannelOption(o=>o.setName("channel").setDescription("Text channel for submissions").setRequired(true))
+  ].map(c=>c.toJSON());
 
-  const rest = new REST({ version: "10" }).setToken(TOKEN);
-  try {
-    console.log("Registering commands...");
-    await rest.put(Routes.applicationGuildCommands(CLIENT_ID,GUILD_ID), { body: commands });
+  const rest = new REST({ version:"10" }).setToken(TOKEN);
+  try{
+    console.log("Registering slash commands...");
+    await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
     console.log("Slash commands registered!");
   } catch(err){ console.error(err); }
 }
 
-// --- Handle interactions ---
+// --- Interaction handler ---
 client.on("interactionCreate", async interaction => {
   if(!interaction.isChatInputCommand()) return;
   if(!isOwner(interaction.user.id)) return interaction.reply({ content:"You cannot use this command.", flags:64 });
@@ -156,6 +145,6 @@ client.once("clientReady", () => {
 
 // --- Start bot ---
 (async () => {
-  await registerCommands();  // register commands first
+  await registerCommands();
   client.login(TOKEN);
 })();
