@@ -34,7 +34,7 @@ try {
   console.error("Failed to read data.json, using empty data:", err);
 }
 
-// Save safely, non-blocking via setImmediate
+// Save safely (non-blocking)
 function saveData() {
   setImmediate(() => {
     fs.writeFileSync(dataPath, JSON.stringify(data, null, 2));
@@ -118,40 +118,44 @@ async function tryAdd(targetType, name, secondary) {
 // --- SLASH COMMAND HANDLER ---
 client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
-  if (!isOwner(interaction.user.id)) return interaction.reply({ content: "You cannot use this command.", ephemeral: true });
+  if (!isOwner(interaction.user.id)) return interaction.reply({ content: "You cannot use this command.", flags: 64 });
 
   const { commandName } = interaction;
 
-  // respond immediately
-  await interaction.deferReply({ ephemeral: true });
+  try {
+    if (commandName === "channellist") {
+      const channel = interaction.options.getChannel("channel");
+      if (!channel || channel.type !== ChannelType.GuildText)
+        return interaction.reply({ content: "Invalid channel.", flags: 64 });
 
-  if (commandName === "channellist") {
-    const channel = interaction.options.getChannel("channel");
-    if (!channel || channel.type !== ChannelType.GuildText)
-      return interaction.editReply({ content: "Invalid channel." });
+      data.listChannelId = channel.id;
+      saveData();
 
-    data.listChannelId = channel.id;
-    saveData();
-    interaction.editReply({ content: `✅ List channel set to **${channel.name}**. Updating list...` });
-    updateListMessage().catch(console.error);
-    return;
-  }
+      // reply immediately
+      interaction.reply({ content: `✅ List channel set to **${channel.name}**. Updating list...`, flags: 64 });
 
-  if (commandName === "channelsubmission") {
-    const channel = interaction.options.getChannel("channel");
-    if (!channel || channel.type !== ChannelType.GuildText)
-      return interaction.editReply({ content: "Invalid channel." });
+      // update list in the background
+      updateListMessage().catch(console.error);
 
-    data.submissionChannelId = channel.id;
-    saveData();
-    return interaction.editReply({ content: `✅ Submission channel set to **${channel.name}**.` });
+    } else if (commandName === "channelsubmission") {
+      const channel = interaction.options.getChannel("channel");
+      if (!channel || channel.type !== ChannelType.GuildText)
+        return interaction.reply({ content: "Invalid channel.", flags: 64 });
+
+      data.submissionChannelId = channel.id;
+      saveData();
+
+      interaction.reply({ content: `✅ Submission channel set to **${channel.name}**.`, flags: 64 });
+    }
+  } catch (err) {
+    console.error("Slash command error:", err);
   }
 });
 
 // --- BOT READY ---
-client.once("ready", () => {
+client.once("clientReady", () => {
   console.log(`Logged in as ${client.user.tag}`);
-  updateListMessage().catch(console.error); // async startup
+  updateListMessage().catch(console.error);
 });
 
 // --- LOGIN ---
