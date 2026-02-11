@@ -41,7 +41,7 @@ function saveData() {
 
 // --- GENERATE KOS LIST ---
 function generateKosMessage() {
-  const playersSorted = [...data.players].sort((a,b)=>a.name.localeCompare(b.name));
+  const playersSorted = [...data.players].sort((a, b) => a.name.localeCompare(b.name));
   let msg = "Kos :\n\nName : Username\n\n";
   for (const p of playersSorted) msg += p.username ? `${p.name} : ${p.username}\n` : `${p.name}\n`;
 
@@ -49,8 +49,8 @@ function generateKosMessage() {
   for (const p of data.topPriority) msg += `${p}\n`;
 
   msg += "\n–––––– CLANS ––––––\n\n";
-  const euClans = data.clans.filter(c => c.region.toLowerCase() === "eu").sort((a,b)=>a.name.localeCompare(b.name));
-  const naClans = data.clans.filter(c => c.region.toLowerCase() === "na").sort((a,b)=>a.name.localeCompare(b.name));
+  const euClans = data.clans.filter(c => c.region.toLowerCase() === "eu").sort((a, b) => a.name.localeCompare(b.name));
+  const naClans = data.clans.filter(c => c.region.toLowerCase() === "na").sort((a, b) => a.name.localeCompare(b.name));
   for (const c of euClans) msg += `EU»${c.name}\n`;
   for (const c of naClans) msg += `NA»${c.name}\n`;
 
@@ -59,25 +59,35 @@ function generateKosMessage() {
   return msg;
 }
 
-// --- UPDATE KOS LIST (async) ---
-function updateListMessage() {
+// --- UPDATE KOS LIST ---
+async function updateListMessage() {
   if (!data.listChannelId) return;
-  client.channels.fetch(data.listChannelId).then(channel => {
+  try {
+    const channel = await client.channels.fetch(data.listChannelId);
     if (!channel || channel.type !== ChannelType.GuildText) return;
 
     const msgContent = generateKosMessage();
 
     if (data.listMessageId) {
-      channel.messages.fetch(data.listMessageId).then(oldMsg => {
-        if (oldMsg) return oldMsg.edit(msgContent);
-        channel.send(msgContent).then(newMsg => { data.listMessageId = newMsg.id; saveData(); }).catch(()=>{});
-      }).catch(()=>{
-        channel.send(msgContent).then(newMsg => { data.listMessageId = newMsg.id; saveData(); }).catch(()=>{});
-      });
+      try {
+        const oldMsg = await channel.messages.fetch(data.listMessageId);
+        if (oldMsg) return await oldMsg.edit(msgContent);
+        const newMsg = await channel.send(msgContent);
+        data.listMessageId = newMsg.id;
+        saveData();
+      } catch {
+        const newMsg = await channel.send(msgContent);
+        data.listMessageId = newMsg.id;
+        saveData();
+      }
     } else {
-      channel.send(msgContent).then(newMsg => { data.listMessageId = newMsg.id; saveData(); }).catch(()=>{});
+      const newMsg = await channel.send(msgContent);
+      data.listMessageId = newMsg.id;
+      saveData();
     }
-  }).catch(()=>{});
+  } catch (err) {
+    console.error("Failed to update KOS list:", err);
+  }
 }
 
 // --- HELPERS ---
@@ -86,36 +96,37 @@ function isOwner(id) {
 }
 
 // --- SLASH COMMANDS ---
-client.on("interactionCreate", interaction => {
+client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
-  if (!isOwner(interaction.user.id)) return interaction.reply({ content:"You cannot use this command.", flags:64 });
+
+  if (!isOwner(interaction.user.id)) 
+    return interaction.reply({ content:"You cannot use this command.", ephemeral:true });
 
   const { commandName } = interaction;
 
   try {
-    if (commandName==="list") {
+    if (commandName === "list") {
       const channel = interaction.options.getChannel("channel");
       if (!channel || channel.type !== ChannelType.GuildText)
-        return interaction.reply({ content:"Invalid channel", flags:64 });
+        return interaction.reply({ content:"Invalid channel", ephemeral:true });
 
       data.listChannelId = channel.id;
       saveData();
 
-      interaction.reply({ content:`✅ List channel set to ${channel.name}`, flags:64 });
+      await interaction.reply({ content:`✅ List channel set to ${channel.name}`, ephemeral:true });
       updateListMessage(); // fire-and-forget
 
-    } else if (commandName==="submission") {
+    } else if (commandName === "submission") {
       const channel = interaction.options.getChannel("channel");
       if (!channel || channel.type !== ChannelType.GuildText)
-        return interaction.reply({ content:"Invalid channel", flags:64 });
+        return interaction.reply({ content:"Invalid channel", ephemeral:true });
 
       data.submissionChannelId = channel.id;
       saveData();
 
-      interaction.reply({ content:`✅ Submission channel set to ${channel.name}`, flags:64 });
+      interaction.reply({ content:`✅ Submission channel set to ${channel.name}`, ephemeral:true });
 
-    } else if (commandName==="panel") {
-      // reply with your instructions
+    } else if (commandName === "panel") {
       const panelMessage = `
 **KOS Submission System**
 This bot organizes submissions for YX players and clans onto the KOS list, keeping everything tracked efficiently.
@@ -136,15 +147,16 @@ Example:
 
 Follow the instructions carefully to avoid duplicates.
       `;
-      interaction.reply({ content: panelMessage, flags:64 });
+      interaction.reply({ content: panelMessage, ephemeral:true });
     }
-  } catch {
-    interaction.reply({ content:"❌ An error occurred", flags:64 });
+  } catch (err) {
+    console.error(err);
+    interaction.reply({ content:"❌ An error occurred", ephemeral:true });
   }
 });
 
 // --- READY ---
-client.once("clientReady", () => {
+client.once("ready", () => {
   console.log(`Logged in as ${client.user.tag}`);
   updateListMessage(); // background
 });
