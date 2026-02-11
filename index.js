@@ -1,139 +1,172 @@
 require('dotenv').config();
 const { 
-    Client, 
-    GatewayIntentBits, 
-    SlashCommandBuilder, 
-    EmbedBuilder 
+  Client, 
+  GatewayIntentBits, 
+  SlashCommandBuilder, 
+  ActionRowBuilder, 
+  StringSelectMenuBuilder, 
+  EmbedBuilder, 
+  PermissionFlagsBits,
+  Events
 } = require("discord.js");
-
 const fs = require("fs");
 const path = require("path");
-const DATA_PATH = path.join(__dirname, "data.json");
 
-// Load or initialize data
-let data = {};
-if (fs.existsSync(DATA_PATH)) {
-    data = JSON.parse(fs.readFileSync(DATA_PATH, "utf8"));
-} else {
-    fs.writeFileSync(DATA_PATH, JSON.stringify(data, null, 2));
-}
+const DATA_PATH = path.join(__dirname, "data.json");
+let data = JSON.parse(fs.readFileSync(DATA_PATH, "utf8"));
 
 function saveData() {
-    fs.writeFileSync(DATA_PATH, JSON.stringify(data, null, 2));
+  fs.writeFileSync(DATA_PATH, JSON.stringify(data, null, 2));
 }
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
+const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
-// Ready event
 client.once('ready', () => {
-    console.log(`Logged in as ${client.user.tag}`);
+  console.log(`Logged in as ${client.user.tag}`);
 });
 
-// Slash commands
-client.on('interactionCreate', async (interaction) => {
-    if (!interaction.isChatInputCommand()) return;
+// --------------------- COMMAND HANDLERS ---------------------
 
+client.on('interactionCreate', async interaction => {
+  if (!interaction.isChatInputCommand() && !interaction.isStringSelectMenu()) return;
+
+  // ---------- PANEL ----------
+  if (interaction.isChatInputCommand()) {
     if (interaction.commandName === "panel") {
-        const embed = new EmbedBuilder()
-            .setColor(0x1ABC9C)
-            .setTitle("KOS Submission System")
-            .setDescription("This bot organizes submissions for YX players and clans onto the KOS list, keeping everything tracked efficiently.")
-            .addFields(
-                {
-                    name: "Players",
-                    value: `* To add players, use the command \`^kos add\` or \`^ka\`\n* When adding players, place the **name before the username**\nExample:\n\`^kos add poison poisonrebuild\`\n\`^ka poison poisonrebuild\``
-                },
-                {
-                    name: "Clans",
-                    value: `* To add clans, use the command \`^kos clan add\` or \`^kca\`\n* When adding clans, place the **name before the region** and use the short region code\nExample:\n\`^kos clan add yx eu\`\n\`^kca yx eu\``
-                }
-            )
-            .setFooter({ text: "Follow the instructions carefully to avoid duplicates." });
+      await interaction.deferReply({ ephemeral: false });
 
-        await interaction.reply({ embeds: [embed] });
+      const embed = new EmbedBuilder()
+        .setTitle("📋 KOS Submission Panel")
+        .setDescription("Organize submissions for YX players and clans on the KOS list efficiently.")
+        .addFields(
+          {
+            name: "Players:",
+            value: "* To add players, use the command `^kos add` or `^ka`\n* Put the **name before the username**\nEx: `^kos add poison poisonrebuild`\n    `^ka poison poisonrebuild`"
+          },
+          {
+            name: "Clans:",
+            value: "* To add clans, use the command `^kos clan add` or `^kca`\n* Put the **name before the region** and use the shortened region\nEx: `^kos clan add yx eu`\n    `^kca yx eu`"
+          }
+        )
+        .setColor(0x00AE86);
+
+      const menu = new StringSelectMenuBuilder()
+        .setCustomId("panel_select")
+        .setPlaceholder("Select Player or Clan")
+        .addOptions(
+          { label: "Player", description: "Submit a player to KOS", value: "player" },
+          { label: "Clan", description: "Submit a clan to KOS", value: "clan" }
+        );
+
+      const row = new ActionRowBuilder().addComponents(menu);
+
+      await interaction.editReply({ embeds: [embed], components: [row] });
     }
+  }
+
+  // ---------- DROPDOWN ----------
+  if (interaction.isStringSelectMenu()) {
+    if (interaction.customId === "panel_select") {
+      const choice = interaction.values[0];
+
+      if (choice === "player") {
+        await interaction.reply({ content: "Submit a player using `^kos add name username` or `^ka name username` in the submission channel.", ephemeral: true });
+      } else if (choice === "clan") {
+        await interaction.reply({ content: "Submit a clan using `^kos clan add name region` or `^kca name region` in the submission channel.", ephemeral: true });
+      }
+    }
+  }
 });
 
-// Message commands
-client.on("messageCreate", async (message) => {
-    if (message.author.bot) return;
+// --------------------- MESSAGE COMMAND HANDLER ---------------------
 
-    const content = message.content.trim().split(/\s+/);
-    const cmd = content[0].toLowerCase();
+client.on('messageCreate', async message => {
+  if (message.author.bot) return;
 
-    // ----- Players -----
-    if (cmd === "^kos" && content[1] === "add") {
-        if (!content[2] || !content[3]) {
-            return message.reply("Usage: `^kos add <name> <username>`\nExample: `^kos add poison poisonrebuild`");
-        }
+  const submissionChannelId = data.submissionChannel;
 
-        const name = content[2];
-        const username = content[3];
+  const args = message.content.trim().split(/ +/g);
 
-        // Prevent duplicates
-        data.players = data.players || [];
-        if (data.players.find(p => p.name === name && p.username === username)) {
-            return message.reply("This player is already on KOS.");
-        }
+  // ---------- SET CHANNELS ----------
+  if (args[0] === "^channelsubmission" && message.member.permissions.has(PermissionFlagsBits.ManageChannels)) {
+    const channel = message.mentions.channels.first();
+    if (!channel) return message.reply("Please mention a channel to set as submission channel.");
+    data.submissionChannel = channel.id;
+    saveData();
+    return message.reply(`✅ Submission channel set to ${channel.name}`);
+  }
 
-        data.players.push({ name, username });
-        saveData();
-        return message.reply(`Player **${name}** with username **${username}** added to KOS.`).then(msg => {
-            setTimeout(() => msg.delete().catch(() => {}), 5000);
-        });
+  if (args[0] === "^channellist" && message.member.permissions.has(PermissionFlagsBits.ManageChannels)) {
+    const channel = message.mentions.channels.first();
+    if (!channel) return message.reply("Please mention a channel to set as list channel.");
+    data.listChannel = channel.id;
+    saveData();
+    return message.reply(`✅ List channel set to ${channel.name}`);
+  }
+
+  // ---------- PLAYER ADD ----------
+  if ((args[0] === "^kos" && args[1] === "add") || args[0] === "^ka") {
+    if (!submissionChannelId || message.channel.id !== submissionChannelId) return;
+
+    let name, username;
+    if (args[0] === "^ka") {
+      name = args[1];
+      username = args[2];
+    } else {
+      name = args[2];
+      username = args[3];
     }
 
-    if (cmd === "^ka") {
-        if (!content[1] || !content[2]) {
-            return message.reply("Usage: `^ka <name> <username>`\nExample: `^ka poison poisonrebuild`");
-        }
-
-        const name = content[1];
-        const username = content[2];
-
-        data.players = data.players || [];
-        if (data.players.find(p => p.name === name && p.username === username)) {
-            return message.reply("This player is already on KOS.");
-        }
-
-        data.players.push({ name, username });
-        saveData();
-        return message.reply(`Player **${name}** with username **${username}** added to KOS.`).then(msg => {
-            setTimeout(() => msg.delete().catch(() => {}), 5000);
-        });
+    if (!name || !username) {
+      return message.reply("Usage: `^kos add name username` or `^ka name username`");
     }
 
-    // ----- Clans -----
-    if ((cmd === "^kos" && content[1] === "clan" && content[2] === "add") || cmd === "^kca") {
-        const args = cmd === "^kca" ? content.slice(1) : content.slice(3);
+    // Check for duplicate
+    const exists = data.players.find(p => p.name === name && p.username === username);
+    if (exists) return message.reply("This player is already on KOS.");
 
-        if (!args[0] || !args[1]) {
-            return message.reply("Usage: `^kos clan add <name> <region>` or `^kca <name> <region>`\nExample: `^kos clan add yx eu`");
-        }
+    data.players.push({ name, username });
+    saveData();
 
-        const name = args[0];
-        const region = args[1].toUpperCase();
-
-        data.clans = data.clans || [];
-        if (data.clans.find(c => c.name === name && c.region === region)) {
-            return message.reply("This clan is already on KOS.");
-        }
-
-        data.clans.push({ name, region });
-        saveData();
-        return message.reply(`Clan **${name}** in region **${region}** added to KOS.`).then(msg => {
-            setTimeout(() => msg.delete().catch(() => {}), 5000);
-        });
+    message.delete().catch(() => {});
+    const listChannel = client.channels.cache.get(data.listChannel);
+    if (listChannel) {
+      listChannel.send(`✅ Player added: **${name}** (${username})`);
     }
+  }
+
+  // ---------- CLAN ADD ----------
+  if ((args[0] === "^kos" && args[1] === "clan" && args[2] === "add") || args[0] === "^kca") {
+    if (!submissionChannelId || message.channel.id !== submissionChannelId) return;
+
+    let name, region;
+    if (args[0] === "^kca") {
+      name = args[1];
+      region = args[2];
+    } else {
+      name = args[3];
+      region = args[4];
+    }
+
+    if (!name || !region) {
+      return message.reply("Usage: `^kos clan add name region` or `^kca name region`");
+    }
+
+    // Check for duplicate
+    const exists = data.clans.find(c => c.name === name && c.region === region);
+    if (exists) return message.reply("This clan is already on KOS.");
+
+    data.clans.push({ name, region });
+    saveData();
+
+    message.delete().catch(() => {});
+    const listChannel = client.channels.cache.get(data.listChannel);
+    if (listChannel) {
+      listChannel.send(`✅ Clan added: **${name}** (${region})`);
+    }
+  }
 });
 
-// Register the slash command (run once)
-client.on('ready', async () => {
-    const commandData = new SlashCommandBuilder()
-        .setName('panel')
-        .setDescription('Displays the KOS submission instructions');
-    
-    await client.application.commands.create(commandData);
-});
+// --------------------- LOGIN ---------------------
 
 client.login(process.env.BOT_TOKEN);
