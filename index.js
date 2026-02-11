@@ -25,7 +25,7 @@ let data = {
   topPriority: [],
 };
 
-// Load safely
+// Safe load
 try {
   if (fs.existsSync(dataPath)) {
     data = JSON.parse(fs.readFileSync(dataPath, "utf8"));
@@ -34,12 +34,12 @@ try {
   console.error("Failed to read data.json, using empty data:", err);
 }
 
-// Save safely
+// Save function
 function saveData() {
   fs.writeFileSync(dataPath, JSON.stringify(data, null, 2));
 }
 
-// --- KOS LIST GENERATION ---
+// --- GENERATE KOS LIST ---
 function generateKosMessage() {
   const playersSorted = [...data.players].sort((a, b) => a.name.localeCompare(b.name));
   let msg = "Kos :\n\nName : Username\n\n";
@@ -61,7 +61,7 @@ function generateKosMessage() {
   return msg;
 }
 
-// --- ROBUST KOS LIST UPDATER ---
+// --- UPDATE KOS LIST (non-blocking) ---
 async function updateListMessage() {
   if (!data.listChannelId) return;
   let channel;
@@ -75,17 +75,15 @@ async function updateListMessage() {
 
   const msgContent = generateKosMessage();
 
-  // edit existing if exists
   if (data.listMessageId) {
     try {
       const oldMsg = await channel.messages.fetch(data.listMessageId);
       if (oldMsg) return oldMsg.edit(msgContent);
     } catch {
-      console.warn("Previous KOS list message not found, sending new one");
+      console.warn("Previous KOS list message missing, sending new one");
     }
   }
 
-  // send new
   try {
     const newMsg = await channel.send(msgContent);
     data.listMessageId = newMsg.id;
@@ -109,12 +107,12 @@ async function tryAdd(targetType, name, secondary) {
     data.clans.push({ name, region: secondary });
   }
   saveData();
-  await updateListMessage(); // ⚡ Await here — this is the reverted behavior
+  updateListMessage().catch(console.error); // ⚡ run async in background
   return { success: true };
 }
 
 // --- SLASH COMMAND HANDLER ---
-client.on("interactionCreate", async interaction => {
+client.on("interactionCreate", interaction => {
   if (!interaction.isChatInputCommand()) return;
   if (!isOwner(interaction.user.id)) return interaction.reply({ content: "You cannot use this command.", flags: 64 });
 
@@ -129,8 +127,9 @@ client.on("interactionCreate", async interaction => {
       data.listChannelId = channel.id;
       saveData();
 
-      await updateListMessage(); // ⬅ await ensures message is posted/edited before reply
-      return interaction.reply({ content: `✅ List channel set to **${channel.name}** and KOS list updated.`, flags: 64 });
+      // reply immediately, list update runs in background
+      interaction.reply({ content: `✅ List channel set to **${channel.name}**.`, flags: 64 });
+      updateListMessage().catch(console.error);
 
     } else if (commandName === "channelsubmission") {
       const channel = interaction.options.getChannel("channel");
@@ -140,18 +139,18 @@ client.on("interactionCreate", async interaction => {
       data.submissionChannelId = channel.id;
       saveData();
 
-      return interaction.reply({ content: `✅ Submission channel set to **${channel.name}**.`, flags: 64 });
+      interaction.reply({ content: `✅ Submission channel set to **${channel.name}**.`, flags: 64 });
     }
   } catch (err) {
     console.error("Slash command error:", err);
-    return interaction.reply({ content: "❌ An error occurred.", flags: 64 });
+    interaction.reply({ content: "❌ An error occurred.", flags: 64 });
   }
 });
 
 // --- BOT READY ---
 client.once("clientReady", () => {
   console.log(`Logged in as ${client.user.tag}`);
-  updateListMessage().catch(console.error);
+  updateListMessage().catch(console.error); // background only
 });
 
 // --- LOGIN ---
