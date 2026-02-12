@@ -64,27 +64,11 @@ This bot organizes LBG players and clans onto the KOS list for YX members.
 
 Players
 * To add players, use the command ^kos add or ^ka
-* When adding players, place the name before the username
-Example:
-^kos add poison poisonrebuild
-^ka poison poisonrebuild
 * To remove players, use the command ^kos remove or ^kr
-* Removing players follows the same format as adding them
-Example:
-^kos remove poison poisonrebuild
-^kr poison poisonrebuild
 
 Clans
 * To add clans, use the command ^kos clan add or ^kca
-* When adding clans, place the name before the region and use the short region code
-Example:
-^kos clan add yx eu
-^kca yx eu
 * To remove clans, use the command ^kos clan remove or ^kcr
-* Removing clans follows the same format as adding them
-Example:
-^kos clan remove yx eu
-^kcr yx eu
 
 Thank you for being a part of YX!`)
         .setColor(0xFF0000);
@@ -132,7 +116,7 @@ async function updateKosList(channel) {
     if(kosData.listData.playersMessageId) {
         try {
             const msg = await channel.messages.fetch(kosData.listData.playersMessageId);
-            await msg.edit(playersText);
+            await msg.edit({ content: playersText });
         } catch {
             const msg = await channel.send(playersText);
             kosData.listData.playersMessageId = msg.id;
@@ -146,7 +130,7 @@ async function updateKosList(channel) {
     if(kosData.listData.priorityMessageId) {
         try {
             const msg = await channel.messages.fetch(kosData.listData.priorityMessageId);
-            await msg.edit(priorityText);
+            await msg.edit({ content: priorityText });
         } catch {
             const msg = await channel.send(priorityText);
             kosData.listData.priorityMessageId = msg.id;
@@ -160,7 +144,7 @@ async function updateKosList(channel) {
     if(kosData.listData.clansMessageId) {
         try {
             const msg = await channel.messages.fetch(kosData.listData.clansMessageId);
-            await msg.edit(clansText);
+            await msg.edit({ content: clansText });
         } catch {
             const msg = await channel.send(clansText);
             kosData.listData.clansMessageId = msg.id;
@@ -179,40 +163,58 @@ client.on('messageCreate', async msg => {
     const parts = msg.content.trim().split(/\s+/);
     const prefix = parts[0].toLowerCase();
 
-    // Add player
-    if(['^ka','^kos'].includes(prefix) && (parts[1]?.toLowerCase()==='add' || prefix==='^ka')){
-        let name = prefix==='^ka'? parts[1] : parts[2];
-        let username = prefix==='^ka'? parts[2] : parts[3];
-        if(!name||!username) return confirmPing(msg,'Player unable to be added.');
+    // ---------------- Add Player ----------------
+    if(prefix === '^ka' || (prefix === '^kos' && parts[1]?.toLowerCase() === 'add')) {
+        let name, username;
+        if(prefix === '^ka') {
+            name = parts[1];
+            username = parts[2];
+        } else { // ^kos add
+            name = parts[2];
+            username = parts[3];
+        }
+        if(!name || !username) return confirmPing(msg,'Player unable to be added.');
         if(kosData.players.some(p=>p.name.toLowerCase()===name.toLowerCase())) return confirmPing(msg,'Player already exists.');
         kosData.players.push({ name, username, addedBy: msg.author.id });
         confirmPing(msg,'Player added!');
         if(kosData.listData.channelId) updateKosList(await client.channels.fetch(kosData.listData.channelId));
     }
 
-    // Remove player
-    if(['^kr','^kos'].includes(prefix) && (parts[1]?.toLowerCase()==='remove' || prefix==='^kr')){
-        let name = prefix==='^kr'? parts[1] : parts[2];
+    // ---------------- Remove Player ----------------
+    if(prefix === '^kr' || (prefix === '^kos' && parts[1]?.toLowerCase() === 'remove')) {
+        let name = prefix === '^kr' ? parts[1] : parts[2];
         if(!name) return confirmPing(msg,'Player unable to be removed.');
-        const idx = kosData.players.findIndex(p=>p.name.toLowerCase()===name.toLowerCase());
-        if(idx!==-1) kosData.players.splice(idx,1);
+        kosData.players = kosData.players.filter(p => p.name.toLowerCase() !== name.toLowerCase());
         confirmPing(msg,'Player removed!');
         if(kosData.listData.channelId) updateKosList(await client.channels.fetch(kosData.listData.channelId));
     }
 
-    // Add/Remove clan
-    if(['^kca','^kcr','^kos'].includes(prefix)){
-        let action = parts[1]?.toLowerCase() || '';
-        let name = prefix==='^kca'||prefix==='^kcr'? parts[2] : parts[3];
-        if(!name) return confirmPing(msg,'Clan name required.');
-        if(['^kca'].includes(prefix) || action==='clan' && parts[2]?.toLowerCase()==='add'){
-            if(kosData.clans.some(c=>c.toLowerCase()===name.toLowerCase())) return confirmPing(msg,'Clan already exists.');
-            kosData.clans.push(name);
-            confirmPing(msg,'Clan added!');
-        } else if(['^kcr'].includes(prefix) || action==='clan' && parts[2]?.toLowerCase()==='remove'){
-            kosData.clans = kosData.clans.filter(c=>c.toLowerCase()!==name.toLowerCase());
-            confirmPing(msg,'Clan removed!');
+    // ---------------- Add/Remove Clan ----------------
+    if(prefix === '^kca' || prefix === '^kcr' || (prefix === '^kos' && parts[1]?.toLowerCase() === 'clan')) {
+        let action = (prefix === '^kcr' || parts[2]?.toLowerCase() === 'remove') ? 'remove' : 'add';
+        let name, region;
+
+        if(prefix === '^kca' || prefix === '^kcr') {
+            name = parts[1];
+            region = parts[2];
+        } else { // ^kos clan add/remove
+            name = parts[3];
+            region = parts[4];
         }
+
+        if(!name || !region) return confirmPing(msg,'Clan name or region required.');
+
+        const formatted = `${region.toUpperCase()}»${name.toUpperCase()}`;
+
+        if(action === 'add') {
+            if(kosData.clans.includes(formatted)) return confirmPing(msg,'Clan already exists.');
+            kosData.clans.push(formatted);
+            confirmPing(msg, `Clan added: ${formatted}`);
+        } else {
+            kosData.clans = kosData.clans.filter(c => c !== formatted);
+            confirmPing(msg, `Clan removed: ${formatted}`);
+        }
+
         if(kosData.listData.channelId) updateKosList(await client.channels.fetch(kosData.listData.channelId));
     }
 });
@@ -222,21 +224,21 @@ client.on('interactionCreate', async interaction => {
     if(!interaction.isChatInputCommand()) return;
 
     // Panel
-    if(interaction.commandName==='panel'){
+    if(interaction.commandName==='panel') {
         if(interaction.user.id!==OWNER_ID) return interaction.reply({ content:'Not allowed.', ephemeral:true });
         await updatePanel(interaction.channel);
         await interaction.reply({ content:'Panel posted/updated!', ephemeral:true });
     }
 
     // List
-    if(interaction.commandName==='list'){
+    if(interaction.commandName==='list') {
         if(interaction.user.id!==OWNER_ID) return interaction.reply({ content:'Not allowed.', ephemeral:true });
         await updateKosList(interaction.channel);
         await interaction.reply({ content:`KOS list posted/updated in <#${interaction.channel.id}>`, ephemeral:true });
     }
 
     // Submission
-    if(interaction.commandName==='submission'){
+    if(interaction.commandName==='submission') {
         if(interaction.user.id!==OWNER_ID) return interaction.reply({ content:'Not allowed.', ephemeral:true });
         kosData.listData.channelId = interaction.channelId;
         await interaction.reply({ content:`Submission channel set to <#${interaction.channelId}>`, ephemeral:true });
@@ -248,5 +250,3 @@ setInterval(saveData, 60_000);
 
 // ---------------- Login ----------------
 client.login(process.env.TOKEN);
-
-
