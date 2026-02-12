@@ -11,6 +11,9 @@ const OWNER_ID = '1283217337084018749';
 let submissionChannelId = null;
 let listChannelId = null;
 
+// Store the IDs of the three list messages
+let listMessages = { players: null, priority: null, clans: null };
+
 const DATA_FILE = './data.json';
 
 // ---------------- Load / Save Data ----------------
@@ -32,28 +35,36 @@ function confirmPing(msg, text){
        .then(reply=>setTimeout(()=>reply.delete().catch(()=>{}),3000));
 }
 
-function formatKosList(){
+// ---------------- KOS List ----------------
+async function postKosList(channel){
     const players = kosData.players.sort((a,b)=>a.name.localeCompare(b.name));
     const priority = kosData.topPriority.slice().sort((a,b)=>a.localeCompare(b));
     const clans = kosData.clans.slice().sort((a,b)=>a.localeCompare(b));
 
-    const formatPlayers = arr => arr.map(e=>`${e.name} : ${e.username || 'N/A'}`).join('\n') || 'None';
-    const formatPriority = arr => arr.join('\n') || 'None';
-    const formatClans = arr => arr.join('\n') || 'None';
+    const formatPlayers = players.map(e=>`${e.name} : ${e.username || 'N/A'}`).join('\n') || 'None';
+    const formatPriority = priority.join('\n') || 'None';
+    const formatClans = clans.join('\n') || 'None';
 
-    return `–––––––– PLAYERS ––––––
-${formatPlayers(players)}
+    // Helper: send new or edit existing message
+    async function sendOrEdit(msgId, content) {
+        if(msgId) {
+            try {
+                const msg = await channel.messages.fetch(msgId);
+                await msg.edit(content);
+                return msg.id;
+            } catch {
+                const newMsg = await channel.send(content);
+                return newMsg.id;
+            }
+        } else {
+            const newMsg = await channel.send(content);
+            return newMsg.id;
+        }
+    }
 
-–––––––– PRIORITY ––––––
-${formatPriority(priority)}
-
-–––––––– CLANS ––––––
-${formatClans(clans)}`;
-}
-
-async function postKosList(channel){
-    const text = formatKosList();
-    await channel.send(`\`\`\`\n${text}\n\`\`\``);
+    listMessages.players = await sendOrEdit(listMessages.players, `–––––––– PLAYERS ––––––\n${formatPlayers}`);
+    listMessages.priority = await sendOrEdit(listMessages.priority, `–––––––– PRIORITY ––––––\n${formatPriority}`);
+    listMessages.clans = await sendOrEdit(listMessages.clans, `–––––––– CLANS ––––––\n${formatClans}`);
 }
 
 // ---------------- Event: Ready ----------------
@@ -127,10 +138,7 @@ client.on('messageCreate', async msg => {
 
         const idx = kosData.clans.findIndex(c=>c.toLowerCase()===name.toLowerCase());
 
-        if(idx===-1 && msg.author.id!==OWNER_ID) return confirmPing(msg,'Clan not found.');
-
         if(idx!==-1) kosData.clans.splice(idx,1);
-
         confirmPing(msg,'Clan removed!');
         if(listChannelId) postKosList(await client.channels.fetch(listChannelId));
     }
@@ -142,7 +150,8 @@ client.on('interactionCreate', async interaction => {
 
     // ---------- Panel ----------
     if(interaction.commandName==='panel'){
-        if(interaction.user.id!==OWNER_ID) return interaction.reply({ content:'You are not allowed to use this.', ephemeral:true });
+        if(interaction.user.id !== OWNER_ID) 
+            return interaction.reply({ content: 'You are not allowed to use this.', ephemeral: true });
 
         const gifEmbed = new EmbedBuilder()
             .setImage('https://i.imgur.com/aV9NbA7.png')
@@ -150,17 +159,27 @@ client.on('interactionCreate', async interaction => {
 
         const tutorialEmbed = new EmbedBuilder()
             .setTitle('KOS Submission System')
-            .setDescription(`This bot organizes LBG players and clans onto the KOS list for YX members.\n\n**Players**\n* To add players, use ^kos add or ^ka\n* To remove players, use ^kos remove or ^kr\n**Clans**\n* To add clans, use ^kos clan add or ^kca\n* To remove clans, use ^kos clan remove or ^kcr\nThank you for being a part of YX!`)
+            .setDescription(`This bot organizes LBG players and clans onto the KOS list for YX members.
+
+**Players**
+* To add players, use ^kos add or ^ka
+* To remove players, use ^kos remove or ^kr
+
+**Clans**
+* To add clans, use ^kos clan add or ^kca
+* To remove clans, use ^kos clan remove or ^kcr
+
+Thank you for being a part of YX!`)
             .setColor(0xFF0000);
 
-        await interaction.channel.send({ embeds:[gifEmbed] });
-        await interaction.channel.send({ embeds:[tutorialEmbed] });
-        await interaction.reply({ content:'Panel posted!', ephemeral:true });
+        await interaction.channel.send({ embeds: [gifEmbed, tutorialEmbed] });
+        await interaction.reply({ content: 'Panel posted!', ephemeral: true });
     }
 
     // ---------- List ----------
     if(interaction.commandName==='list'){
-        if(interaction.user.id!==OWNER_ID) return interaction.reply({ content:'You are not allowed to use this.', ephemeral:true });
+        if(interaction.user.id !== OWNER_ID) 
+            return interaction.reply({ content:'You are not allowed to use this.', ephemeral:true });
 
         if(!listChannelId) listChannelId = interaction.channelId;
         const channel = await client.channels.fetch(listChannelId);
@@ -170,7 +189,8 @@ client.on('interactionCreate', async interaction => {
 
     // ---------- Submission ----------
     if(interaction.commandName==='submission'){
-        if(interaction.user.id!==OWNER_ID) return interaction.reply({ content:'You are not allowed to use this.', ephemeral:true });
+        if(interaction.user.id!==OWNER_ID) 
+            return interaction.reply({ content:'You are not allowed to use this.', ephemeral:true });
 
         submissionChannelId = interaction.channelId;
         await interaction.reply({ content:`Submission channel set to <#${submissionChannelId}>`, ephemeral:true });
@@ -182,4 +202,3 @@ setInterval(() => saveData(), 60_000); // save memory -> file every 60s
 
 // ---------------- Login ----------------
 client.login(process.env.TOKEN);
-
