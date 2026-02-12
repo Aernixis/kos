@@ -182,106 +182,122 @@ client.on('messageCreate', async msg => {
     const p = msg.content.trim().split(/\s+/);
     const cmd = p[0].toLowerCase();
 
-    let pinged = false; // Prevent double ping
-
     // --- ADD PLAYER ---
     if (cmd === '^ka') {
         const name = p[1], user = p[2];
-        if (!name || !user) { confirmPing(msg, 'Name and username required.'); pinged = true; }
-        else if (kosData.players.some(x => norm(x.name) === norm(name))) { confirmPing(msg, 'Player already exists.'); pinged = true; }
-        else {
-            kosData.players.push({ name, username: user });
-            saveData();
-            confirmPing(msg, `Added ${name}`); pinged = true;
+        if (!name || !user) return confirmPing(msg, 'Name and username required.');
+        if (kosData.players.some(x => norm(x.name) === norm(name))) 
+            return confirmPing(msg, 'Player already exists.');
+
+        kosData.players.push({ name, username: user });
+        saveData();
+        confirmPing(msg, `Added ${name}`);
+
+        if (kosData.listData.channelId) {
+            const ch = await client.channels.fetch(kosData.listData.channelId).catch(()=>null);
+            if (ch) await updateKosList(ch);
         }
+        return;
     }
 
     // --- REMOVE PLAYER ---
-    else if (cmd === '^kr') {
+    if (cmd === '^kr') {
         const name = p[1];
-        if (!name) { confirmPing(msg, 'Name required.'); pinged = true; }
-        else {
-            kosData.players = kosData.players.filter(x => norm(x.name) !== norm(name));
-            kosData.topPriority = kosData.topPriority.filter(x => x !== norm(name));
-            saveData();
-            confirmPing(msg, `Removed ${name}`); pinged = true;
+        if (!name) return confirmPing(msg, 'Name required.');
+
+        kosData.players = kosData.players.filter(x => norm(x.name) !== norm(name));
+        kosData.topPriority = kosData.topPriority.filter(x => x !== norm(name));
+        saveData();
+        confirmPing(msg, `Removed ${name}`);
+
+        if (kosData.listData.channelId) {
+            const ch = await client.channels.fetch(kosData.listData.channelId).catch(()=>null);
+            if (ch) await updateKosList(ch);
         }
+        return;
     }
 
     // --- PRIORITY ---
-    else if (['^pa','^p','^pr'].includes(cmd)) {
-        if (!canUsePriority(msg)) { confirmPing(msg, 'You are not allowed to use priority commands.'); pinged = true; }
-        else {
-            const name = p[1];
-            if (!name) { confirmPing(msg, 'Name required.'); pinged = true; }
-            else {
-                const key = norm(name);
+    if (['^pa','^p','^pr'].includes(cmd)) {
+        if (!canUsePriority(msg)) return confirmPing(msg, 'You are not allowed to use priority commands.');
 
-                if (cmd === '^pa') {
-                    const username = p[2];
-                    const playerExists = kosData.players.some(x => norm(x.name) === key);
-                    if (!playerExists) {
-                        kosData.players.push({ name, username: username || 'N/A' });
-                        kosData.topPriority.push(key);
-                        saveData();
-                        confirmPing(msg, `${name} added to priority`); pinged = true;
-                    } else {
-                        if (!kosData.topPriority.includes(key)) kosData.topPriority.push(key);
-                        saveData();
-                        confirmPing(msg, `Prioritized ${name}`); pinged = true;
-                    }
-                } 
-                else if (cmd === '^p') {
-                    if (!kosData.players.some(x => norm(x.name) === key)) { confirmPing(msg, 'Player must already be on the KOS list.'); pinged = true; }
-                    else {
-                        if (!kosData.topPriority.includes(key)) kosData.topPriority.push(key);
-                        saveData();
-                        confirmPing(msg, `Prioritized ${name}`); pinged = true;
-                    }
-                }
-                else if (cmd === '^pr') {
-                    kosData.topPriority = kosData.topPriority.filter(x => x !== key);
-                    saveData();
-                    confirmPing(msg, `Demoted ${name}`); pinged = true;
-                }
+        const name = p[1];
+        if (!name) return confirmPing(msg, 'Name required.');
+        const key = norm(name);
+
+        // ^pa = add + prioritize
+        if (cmd === '^pa') {
+            const username = p[2];
+            const playerExists = kosData.players.some(x => norm(x.name) === key);
+            if (!playerExists) {
+                kosData.players.push({ name, username: username || 'N/A' });
+                kosData.topPriority.push(key);
+                saveData();
+                confirmPing(msg, `${name} added to priority`);
+            } else {
+                if (!kosData.topPriority.includes(key)) kosData.topPriority.push(key);
+                saveData();
+                confirmPing(msg, `Prioritized ${name}`);
             }
         }
+
+        // ^p = promote existing
+        if (cmd === '^p') {
+            if (!kosData.players.some(x => norm(x.name) === key))
+                return confirmPing(msg, 'Player must already be on the KOS list.');
+            if (!kosData.topPriority.includes(key)) kosData.topPriority.push(key);
+            saveData();
+            confirmPing(msg, `Prioritized ${name}`);
+        }
+
+        // ^pr = demote
+        if (cmd === '^pr') {
+            kosData.topPriority = kosData.topPriority.filter(x => x !== key);
+            saveData();
+            confirmPing(msg, `Demoted ${name}`);
+        }
+
+        if (kosData.listData.channelId) {
+            const ch = await client.channels.fetch(kosData.listData.channelId).catch(()=>null);
+            if (ch) await updateKosList(ch);
+        }
+        return;
     }
 
     // --- ADD CLAN ---
-    else if (cmd === '^kca') {
+    if (cmd === '^kca') {
         const name = p[1], region = p[2];
-        if (!name || !region) { confirmPing(msg, 'Clan name and region required.'); pinged = true; }
-        else {
-            const clan = `${region.toUpperCase()}»${name.toUpperCase()}`;
-            if (kosData.clans.includes(clan)) { confirmPing(msg, 'Clan already exists.'); pinged = true; }
-            else {
-                kosData.clans.push(clan);
-                saveData();
-                confirmPing(msg, `Added clan ${clan}`); pinged = true;
-            }
+        if (!name || !region) return confirmPing(msg, 'Clan name and region required.');
+        const clan = `${region.toUpperCase()}»${name.toUpperCase()}`;
+        if (kosData.clans.includes(clan)) return confirmPing(msg, 'Clan already exists.');
+
+        kosData.clans.push(clan);
+        saveData();
+        confirmPing(msg, `Added clan ${clan}`);
+
+        if (kosData.listData.channelId) {
+            const ch = await client.channels.fetch(kosData.listData.channelId).catch(()=>null);
+            if (ch) await updateKosList(ch);
         }
+        return;
     }
 
     // --- REMOVE CLAN ---
-    else if (cmd === '^kcr') {
+    if (cmd === '^kcr') {
         const name = p[1], region = p[2];
-        if (!name || !region) { confirmPing(msg, 'Clan name and region required.'); pinged = true; }
-        else {
-            const clan = `${region.toUpperCase()}»${name.toUpperCase()}`;
-            if (!kosData.clans.includes(clan)) { confirmPing(msg, 'Clan not found.'); pinged = true; }
-            else {
-                kosData.clans = kosData.clans.filter(c => c !== clan);
-                saveData();
-                confirmPing(msg, `Removed clan ${clan}`); pinged = true;
-            }
-        }
-    }
+        if (!name || !region) return confirmPing(msg, 'Clan name and region required.');
+        const clan = `${region.toUpperCase()}»${name.toUpperCase()}`;
+        if (!kosData.clans.includes(clan)) return confirmPing(msg, 'Clan not found.');
 
-    // Update list after any command that changed data
-    if (kosData.listData.channelId && !pinged) {
-        const ch = await client.channels.fetch(kosData.listData.channelId).catch(()=>null);
-        if (ch) updateKosList(ch);
+        kosData.clans = kosData.clans.filter(c => c !== clan);
+        saveData();
+        confirmPing(msg, `Removed clan ${clan}`);
+
+        if (kosData.listData.channelId) {
+            const ch = await client.channels.fetch(kosData.listData.channelId).catch(()=>null);
+            if (ch) await updateKosList(ch);
+        }
+        return;
     }
 });
 
