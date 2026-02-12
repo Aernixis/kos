@@ -36,11 +36,9 @@ if (fs.existsSync(DATA_FILE)) {
 }
 
 // ---------------- DATA NORMALIZATION ----------------
-// Normalize clans to objects with addedBy if needed
 if (kosData.clans.length > 0 && typeof kosData.clans[0] === 'string') {
     kosData.clans = kosData.clans.map(c => ({ clan: c, addedBy: null }));
 }
-// Normalize players to have addedBy if missing
 kosData.players = kosData.players.map(p => ({ ...p, addedBy: p.addedBy || null }));
 
 // ---------------- SAVE ----------------
@@ -53,15 +51,14 @@ const norm = s => s.toLowerCase();
 let panelUpdating = false;
 let listUpdating = false;
 
-// UPDATED confirmPing to delete both user and bot message
+// Confirm ping updated: deletes both user and bot message
 async function confirmPing(msg, text) {
     if (!msg.channel) return;
     try {
         const botMsg = await msg.channel.send(`<@${msg.author.id}> ${text}`);
-        // Delete both bot message and user message after 3 seconds
         setTimeout(() => {
-            botMsg.delete().catch(()=>{});
-            msg.delete().catch(()=>{});
+            botMsg.delete().catch(() => {});
+            msg.delete().catch(() => {});
         }, 3000);
     } catch {}
 }
@@ -74,7 +71,11 @@ function canUsePriority(msg) {
 // ---------------- FORMAT ----------------
 function formatPriority() {
     return kosData.topPriority
-        .map(n => kosData.players.find(p => norm(p.name) === norm(n))?.name || n)
+        .map(n => {
+            const p = kosData.players.find(p => norm(p.name) === norm(n));
+            if (!p) return n;
+            return `${p.name} ${p.username !== 'N/A' ? `<@${p.username}>` : ''}`;
+        })
         .sort()
         .join('\n') || 'None';
 }
