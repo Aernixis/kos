@@ -31,6 +31,7 @@ let kosData = {
     }
 };
 
+// ---------------- LOAD ----------------
 if (fs.existsSync(DATA_FILE)) {
     try {
         kosData = JSON.parse(fs.readFileSync(DATA_FILE));
@@ -127,29 +128,17 @@ async function updatePanel(channel) {
 Players
 This bot organizes LBG players and clans onto the KOS list for YX members.
 
-Players
-To add players, use the command ^kos add or ^ka
-When adding players, place the name before the username
-Example:
-^kos add poison poisonrebuild
-^ka poison poisonrebuild
-To remove players, use the command ^kos remove or ^kr
-Removing players follows the same format as adding them
-Example:
-^kos remove poison poisonrebuild
-^kr poison poisonrebuild
+Add: ^kos add NAME USERNAME or ^ka NAME USERNAME
+Remove: ^kos remove NAME or ^kr NAME
+
+Priority
+^pa NAME [USERNAME]
+^p NAME
+^pr NAME
 
 Clans
-To add clans, use the command ^kos clan add or ^kca
-When adding clans, place the name before the region and use the short region code
-Example:
-^kos clan add yx eu
-^kca yx eu
-To remove clans, use the command ^kos clan remove or ^kcr
-Removing clans follows the same format as adding them
-Example:
-^kos clan remove yx eu
-^kcr yx eu
+^kca NAME REGION
+^kcr NAME REGION
 
 Thank you for being a part of YX!
         `);
@@ -187,7 +176,6 @@ client.on('messageCreate', async msg => {
         kosData.players.push({ name, username: user });
         saveData();
         confirmPing(msg, `Added ${name}`);
-        return;
     }
 
     // REMOVE PLAYER (FULL)
@@ -198,7 +186,6 @@ client.on('messageCreate', async msg => {
         kosData.topPriority = kosData.topPriority.filter(x => x !== norm(name));
         saveData();
         confirmPing(msg, `Removed ${name}`);
-        return;
     }
 
     // PRIORITY (LOCKED)
@@ -207,40 +194,39 @@ client.on('messageCreate', async msg => {
             return confirmPing(msg, 'You are not allowed to use priority commands.');
 
         const name = p[1];
-        if (!name) return confirmPing(msg, 'Name required.');
         const key = norm(name);
+        const username = p[2];
 
-        // ^pa
+        if (!name) return confirmPing(msg, 'Name required.');
+
+        // ^pa → add OR promote
         if (cmd === '^pa') {
-            const user = p[2];
-            if (!kosData.players.some(x => norm(x.name) === key)) {
-                if (!user) return confirmPing(msg, 'Username required.');
-                kosData.players.push({ name, username: user });
+            let player = kosData.players.find(x => norm(x.name) === key);
+            if (!player) {
+                if (!username) return confirmPing(msg, 'Username required.');
+                kosData.players.push({ name, username });
             }
             if (!kosData.topPriority.includes(key))
                 kosData.topPriority.push(key);
             saveData();
-            confirmPing(msg, `Priority added: ${name}`);
-            return;
+            confirmPing(msg, `Prioritized ${name}`);
         }
 
-        // ^p
+        // ^p → promote only
         if (cmd === '^p') {
             if (!kosData.players.some(x => norm(x.name) === key))
                 return confirmPing(msg, 'Player must already be on the KOS list.');
             if (!kosData.topPriority.includes(key))
                 kosData.topPriority.push(key);
             saveData();
-            confirmPing(msg, `Promoted: ${name}`);
-            return;
+            confirmPing(msg, `Prioritized ${name}`);
         }
 
-        // ^pr
+        // ^pr → demote only
         if (cmd === '^pr') {
             kosData.topPriority = kosData.topPriority.filter(x => x !== key);
             saveData();
-            confirmPing(msg, `Demoted: ${name}`);
-            return;
+            confirmPing(msg, `Demoted ${name}`);
         }
     }
 
@@ -256,25 +242,18 @@ client.on('interactionCreate', async i => {
     if (i.user.id !== OWNER_ID)
         return i.reply({ content: 'Not allowed.', ephemeral: true });
 
-    try {
-        if (i.commandName === 'panel') {
-            await i.deferReply({ ephemeral: true });
-            await updatePanel(i.channel);
-            return i.editReply('Panel updated.');
-        }
+    if (i.commandName === 'panel') {
+        await i.deferReply({ ephemeral: true });
+        await updatePanel(i.channel);
+        return i.editReply('Panel updated.');
+    }
 
-        if (i.commandName === 'list') {
-            await i.deferReply({ ephemeral: true });
-            await updateKosList(i.channel);
-            return i.editReply('KOS list updated.');
-        }
-    } catch (e) {
-        console.error(e);
-        if (!i.replied)
-            i.reply({ content: 'Error occurred.', ephemeral: true });
+    if (i.commandName === 'list') {
+        await i.deferReply({ ephemeral: true });
+        await updateKosList(i.channel);
+        return i.editReply('KOS list updated.');
     }
 });
 
 // ---------------- LOGIN ----------------
 client.login(process.env.TOKEN);
-
