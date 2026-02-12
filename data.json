@@ -6,6 +6,16 @@
     "topPriority": null,
     "clans": null
   },
+  "panelMessages": {
+    "gif": null,
+    "tutorial": null
+  },
+  "listData": {
+    "channelId": null,
+    "playersMessageId": null,
+    "priorityMessageId": null,
+    "clansMessageId": null
+  },
   "players": [
     {"name":"1U_0I","username":"1U_0I","addedBy":"1283217337084018749"},
     {"name":"—043—","username":"lennoxtownmonkey15","addedBy":"1283217337084018749"},
@@ -106,8 +116,4 @@
     "NA»SH",
     "NA»ATK"
   ]
-if (!kosData.panelMessages) kosData.panelMessages = { gif: null, tutorial: null };
-if (!kosData.listData) kosData.listData = { channelId: null, playersMessageId: null, priorityMessageId: null, clansMessageId: null };
 }
-
-
