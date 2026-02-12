@@ -19,12 +19,17 @@ const DATA_FILE = './data.json';
 // ---------------- Load / Save Data ----------------
 let kosData = { players: [], topPriority: [], clans: [] };
 if(fs.existsSync(DATA_FILE)) {
-    try { kosData = JSON.parse(fs.readFileSync(DATA_FILE)); }
-    catch(e){ console.error('Failed to load data.json, starting fresh.', e); }
+    try { 
+        kosData = JSON.parse(fs.readFileSync(DATA_FILE)); 
+        // Load previous listMessages if present
+        if(kosData.listMessages) listMessages = kosData.listMessages;
+        if(kosData.listChannelId) listChannelId = kosData.listChannelId;
+    } catch(e){ console.error('Failed to load data.json, starting fresh.', e); }
 }
 
 function saveData() { 
-    fs.writeFile(DATA_FILE, JSON.stringify(kosData, null, 2), err => {
+    const saveObj = { ...kosData, listMessages, listChannelId };
+    fs.writeFile(DATA_FILE, JSON.stringify(saveObj, null, 2), err => {
         if(err) console.error('Failed to save data.json:', err);
     });
 }
@@ -45,7 +50,6 @@ async function postKosList(channel){
     const formatPriority = priority.join('\n') || 'None';
     const formatClans = clans.join('\n') || 'None';
 
-    // Helper: send new or edit existing message
     async function sendOrEdit(msgId, content) {
         if(msgId) {
             try {
@@ -62,9 +66,14 @@ async function postKosList(channel){
         }
     }
 
-    listMessages.players = await sendOrEdit(listMessages.players, `–––––––– PLAYERS ––––––\n${formatPlayers}`);
-    listMessages.priority = await sendOrEdit(listMessages.priority, `–––––––– PRIORITY ––––––\n${formatPriority}`);
-    listMessages.clans = await sendOrEdit(listMessages.clans, `–––––––– CLANS ––––––\n${formatClans}`);
+    // Each message wrapped in triple backticks
+    listMessages.players = await sendOrEdit(listMessages.players, `\`\`\`\n–––––––– PLAYERS ––––––\n${formatPlayers}\n\`\`\``);
+    listMessages.priority = await sendOrEdit(listMessages.priority, `\`\`\`\n–––––––– PRIORITY ––––––\n${formatPriority}\n\`\`\``);
+    listMessages.clans = await sendOrEdit(listMessages.clans, `\`\`\`\n–––––––– CLANS ––––––\n${formatClans}\n\`\`\``);
+
+    // Persist updated message IDs and channel
+    listChannelId = channel.id;
+    saveData();
 }
 
 // ---------------- Event: Ready ----------------
@@ -172,6 +181,7 @@ client.on('interactionCreate', async interaction => {
 Thank you for being a part of YX!`)
             .setColor(0xFF0000);
 
+        // Send both embeds in ONE message
         await interaction.channel.send({ embeds: [gifEmbed, tutorialEmbed] });
         await interaction.reply({ content: 'Panel posted!', ephemeral: true });
     }
@@ -181,9 +191,10 @@ Thank you for being a part of YX!`)
         if(interaction.user.id !== OWNER_ID) 
             return interaction.reply({ content:'You are not allowed to use this.', ephemeral:true });
 
-        if(!listChannelId) listChannelId = interaction.channelId;
+        listChannelId = interaction.channelId;
         const channel = await client.channels.fetch(listChannelId);
         await postKosList(channel);
+
         await interaction.reply({ content:`KOS list posted in <#${listChannelId}>`, ephemeral:true });
     }
 
