@@ -125,22 +125,33 @@ async function updatePanel(channel) {
         .setTitle('KOS Submission System')
         .setColor(0xFF0000)
         .setDescription(`
-Players
 This bot organizes LBG players and clans onto the KOS list for YX members.
 
-Add: ^kos add NAME USERNAME or ^ka NAME USERNAME
-Remove: ^kos remove NAME or ^kr NAME
-
-Priority
-^pa NAME [USERNAME]
-^p NAME
-^pr NAME
+Players
+To add players, use the command ^kos add or ^ka
+When adding players, place the name before the username
+Example:
+^kos add poison poisonrebuild
+^ka poison poisonrebuild
+To remove players, use the command ^kos remove or ^kr
+Removing players follows the same format as adding them
+Example:
+^kos remove poison poisonrebuild
+^kr poison poisonrebuild
 
 Clans
-^kca NAME REGION
-^kcr NAME REGION
+To add clans, use the command ^kos clan add or ^kca
+When adding clans, place the name before the region and use the short region code
+Example:
+^kos clan add yx eu
+^kca yx eu
+To remove clans, use the command ^kos clan remove or ^kcr
+Removing clans follows the same format as adding them
+Example:
+^kos clan remove yx eu
+^kcr yx eu
 
-Thank you for being a part of YX!
+Thank you for being apart of YX!
         `);
 
     async function send(id, embed) {
@@ -257,3 +268,4 @@ client.on('interactionCreate', async i => {
 
 // ---------------- LOGIN ----------------
 client.login(process.env.TOKEN);
+
