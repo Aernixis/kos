@@ -31,7 +31,6 @@ let kosData = {
     }
 };
 
-// ---------------- LOAD ----------------
 if (fs.existsSync(DATA_FILE)) {
     try {
         kosData = JSON.parse(fs.readFileSync(DATA_FILE));
@@ -49,7 +48,8 @@ const norm = s => s.toLowerCase();
 // ---------------- HELPERS ----------------
 function confirmPing(msg, text) {
     msg.channel.send(`<@${msg.author.id}> ${text}`)
-        .then(m => setTimeout(() => m.delete().catch(() => {}), 3000));
+        .then(m => setTimeout(() => m.delete().catch(() => {}), 3000))
+        .catch(()=>{});
 }
 
 function canUsePriority(msg) {
@@ -70,7 +70,7 @@ function formatPlayers() {
     return kosData.players
         .filter(p => !kosData.topPriority.includes(norm(p.name)))
         .sort((a, b) => a.name.localeCompare(b.name))
-        .map(p => `${p.name} : ${p.username}`)
+        .map(p => `${p.name} : ${p.username || 'N/A'}`)
         .join('\n') || 'None';
 }
 
@@ -87,11 +87,11 @@ async function updateKosList(channel) {
         try {
             if (id) {
                 const m = await channel.messages.fetch(id);
-                await m.edit(content);
+                await m.edit({ content });
                 return m.id;
             }
         } catch {}
-        const m = await channel.send(content);
+        const m = await channel.send({ content });
         return m.id;
     }
 
@@ -178,7 +178,7 @@ client.on('messageCreate', async msg => {
     const p = msg.content.trim().split(/\s+/);
     const cmd = p[0].toLowerCase();
 
-    // ADD PLAYER
+    // --- ADD PLAYER ---
     if (cmd === '^ka') {
         const name = p[1], user = p[2];
         if (!name || !user) return confirmPing(msg, 'Name and username required.');
@@ -189,8 +189,8 @@ client.on('messageCreate', async msg => {
         confirmPing(msg, `Added ${name}`);
     }
 
-    // REMOVE PLAYER (FULL)
-    if (cmd === '^kr') {
+    // --- REMOVE PLAYER ---
+    else if (cmd === '^kr') {
         const name = p[1];
         if (!name) return confirmPing(msg, 'Name required.');
         kosData.players = kosData.players.filter(x => norm(x.name) !== norm(name));
@@ -199,73 +199,86 @@ client.on('messageCreate', async msg => {
         confirmPing(msg, `Removed ${name}`);
     }
 
-    // PRIORITY (LOCKED)
-    if (['^pa', '^p', '^pr'].includes(cmd)) {
-        if (!canUsePriority(msg))
-            return confirmPing(msg, 'You are not allowed to use priority commands.');
+    // --- PRIORITY ---
+    else if (['^pa','^p','^pr'].includes(cmd)) {
+        if (!canUsePriority(msg)) return confirmPing(msg, 'You are not allowed to use priority commands.');
 
         const name = p[1];
-        const key = norm(name);
-        const username = p[2];
-
         if (!name) return confirmPing(msg, 'Name required.');
+        const key = norm(name);
 
-        // ^pa → add OR promote
+        // ^pa = add + prioritize
         if (cmd === '^pa') {
-            let player = kosData.players.find(x => norm(x.name) === key);
-            if (!player) {
-                if (!username) return confirmPing(msg, 'Username required.');
-                kosData.players.push({ name, username });
+            const username = p[2];
+            if (!kosData.players.some(x => norm(x.name) === key)) {
+                kosData.players.push({ name, username: username || 'N/A' });
             }
-            if (!kosData.topPriority.includes(key))
-                kosData.topPriority.push(key);
+            if (!kosData.topPriority.includes(key)) kosData.topPriority.push(key);
             saveData();
             confirmPing(msg, `Prioritized ${name}`);
         }
 
-        // ^p → promote only
-        if (cmd === '^p') {
+        // ^p = promote existing
+        else if (cmd === '^p') {
             if (!kosData.players.some(x => norm(x.name) === key))
                 return confirmPing(msg, 'Player must already be on the KOS list.');
-            if (!kosData.topPriority.includes(key))
-                kosData.topPriority.push(key);
+            if (!kosData.topPriority.includes(key)) kosData.topPriority.push(key);
             saveData();
             confirmPing(msg, `Prioritized ${name}`);
         }
 
-        // ^pr → demote only
-        if (cmd === '^pr') {
+        // ^pr = demote
+        else if (cmd === '^pr') {
             kosData.topPriority = kosData.topPriority.filter(x => x !== key);
             saveData();
             confirmPing(msg, `Demoted ${name}`);
         }
     }
 
+    // Update list after any change
     if (kosData.listData.channelId) {
-        const ch = await client.channels.fetch(kosData.listData.channelId).catch(() => null);
+        const ch = await client.channels.fetch(kosData.listData.channelId).catch(()=>null);
         if (ch) updateKosList(ch);
     }
 });
 
-// ---------------- SLASH ----------------
+// ---------------- SLASH COMMANDS ----------------
 client.on('interactionCreate', async i => {
     if (!i.isChatInputCommand()) return;
+
     if (i.user.id !== OWNER_ID)
-        return i.reply({ content: 'Not allowed.', ephemeral: true });
+        return i.reply({ content: 'Not allowed.', ephemeral: true }).catch(()=>{});
 
-    if (i.commandName === 'panel') {
-        await i.deferReply({ ephemeral: true });
-        await updatePanel(i.channel);
-        return i.editReply('Panel updated.');
-    }
+    try {
+        if (i.commandName === 'panel') {
+            if (!i.replied && !i.deferred) await i.deferReply({ ephemeral: true }).catch(()=>{});
+            await updatePanel(i.channel);
+            if (i.deferred) await i.editReply({ content: 'Panel updated.' }).catch(()=>{});
+            else await i.reply({ content: 'Panel updated.', ephemeral: true }).catch(()=>{});
+        }
 
-    if (i.commandName === 'list') {
-        await i.deferReply({ ephemeral: true });
-        await updateKosList(i.channel);
-        return i.editReply('KOS list updated.');
+        if (i.commandName === 'list') {
+            if (!i.replied && !i.deferred) await i.deferReply({ ephemeral: true }).catch(()=>{});
+            await updateKosList(i.channel);
+            if (i.deferred) await i.editReply({ content: 'KOS list updated.' }).catch(()=>{});
+            else await i.reply({ content: 'KOS list updated.', ephemeral: true }).catch(()=>{});
+        }
+
+        if (i.commandName === 'submission') {
+            kosData.listData.channelId = i.channelId;
+            saveData();
+            if (!i.replied) await i.reply({ content: `Submission channel set to <#${i.channelId}>`, ephemeral: true }).catch(()=>{});
+        }
+
+    } catch (e) {
+        console.error('Slash command error:', e);
+        if (!i.replied && !i.deferred) 
+            i.reply({ content: 'Error occurred.', ephemeral: true }).catch(()=>{});
     }
 });
 
+// ---------------- PERIODIC SAVE ----------------
+setInterval(saveData, 60_000);
+
 // ---------------- LOGIN ----------------
 client.login(process.env.TOKEN);
-
