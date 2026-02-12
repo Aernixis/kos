@@ -85,6 +85,14 @@ function formatClans() {
         .join('\n');
 }
 
+// Helper to return existing formatted content for KOS messages
+function contentWithExistingFormatting(type) {
+    if (type === 'players') return `–––––––– PLAYERS ––––––\n${formatPlayers()}`;
+    if (type === 'priority') return `–––––––– PRIORITY ––––––\n${formatPriority()}`;
+    if (type === 'clans') return `–––––––– CLANS ––––––\n${formatClans()}`;
+    return '';
+}
+
 // ---------------- LIST UPDATE ----------------
 async function updateKosList(channel) {
     if (!channel || listUpdating) return;
@@ -106,17 +114,23 @@ async function updateKosList(channel) {
 
     kosData.listData.playersMessageId = await fetchOrSend(
         kosData.listData.playersMessageId,
-        `\`\`\`–––––––– PLAYERS ––––––\n${formatPlayers()}\n\`\`\``
+        `\`\`\`
+${contentWithExistingFormatting('players')}
+\`\`\``
     );
 
     kosData.listData.priorityMessageId = await fetchOrSend(
         kosData.listData.priorityMessageId,
-        `\`\`\`–––––––– PRIORITY ––––––\n${formatPriority()}\n\`\`\``
+        `\`\`\`
+${contentWithExistingFormatting('priority')}
+\`\`\``
     );
 
     kosData.listData.clansMessageId = await fetchOrSend(
         kosData.listData.clansMessageId,
-        `\`\`\`–––––––– CLANS ––––––\n${formatClans()}\n\`\`\``
+        `\`\`\`
+${contentWithExistingFormatting('clans')}
+\`\`\``
     );
 
     saveData();
@@ -200,14 +214,14 @@ client.on('messageCreate', async msg => {
         } catch {}
     }
 
-    // Enforce submission channel
+    let handled = false; // Prevent multiple replies
+
+    // Enforce submission channel ONLY if message starts with ^
     if (kosData.listData.channelId && msg.channel.id !== kosData.listData.channelId) {
-        if (['^ka','^kr','^pa','^p','^pr','^kca','^kcr'].includes(cmd)) {
+        if (msg.content.startsWith('^') && ['^ka','^kr','^pa','^p','^pr','^kca','^kcr'].includes(cmd)) {
             return confirmPingOnce('Use KOS commands in the KOS channel.');
         }
     }
-
-    let handled = false; // Prevent multiple replies
 
     // --- ADD PLAYER ---
     if (cmd === '^ka' && !handled) {
