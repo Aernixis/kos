@@ -106,4 +106,8 @@
     "NA»SH",
     "NA»ATK"
   ]
+if (!kosData.panelMessages) kosData.panelMessages = { gif: null, tutorial: null };
+if (!kosData.listData) kosData.listData = { channelId: null, playersMessageId: null, priorityMessageId: null, clansMessageId: null };
 }
+
+
