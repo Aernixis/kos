@@ -85,7 +85,6 @@ function formatClans() {
         .join('\n');
 }
 
-// Helper to return existing formatted content for KOS messages
 function contentWithExistingFormatting(type) {
     if (type === 'players') return `–––––––– PLAYERS ––––––\n${formatPlayers()}`;
     if (type === 'priority') return `–––––––– PRIORITY ––––––\n${formatPriority()}`;
@@ -201,31 +200,31 @@ Thank you for being apart of YX!
 // ---------------- PREFIX COMMANDS ----------------
 client.on('messageCreate', async msg => {
     if (msg.author.bot) return;
+    if (!msg.content.startsWith('^')) return;
+
     const p = msg.content.trim().split(/\s+/);
     const cmd = p[0].toLowerCase();
+    let handled = false;
 
-    // --- CONFIRM PING FIXED ---
     async function confirmPingOnce(text) {
-        if (!msg.channel) return;
+        if (handled) return;
+        handled = true;
         try {
-            await msg.delete().catch(()=>{});
+            await msg.delete().catch(() => {});
             const botMsg = await msg.channel.send(`<@${msg.author.id}> ${text}`);
             setTimeout(() => botMsg.delete().catch(() => {}), 3000);
         } catch {}
     }
 
-    let handled = false; // Prevent multiple replies
-
-    // Enforce submission channel ONLY if message starts with ^
+    // --- Enforce submission channel ---
     if (kosData.listData.channelId && msg.channel.id !== kosData.listData.channelId) {
-        if (msg.content.startsWith('^') && ['^ka','^kr','^pa','^p','^pr','^kca','^kcr'].includes(cmd)) {
+        if (['^ka','^kr','^pa','^p','^pr','^kca','^kcr'].includes(cmd)) {
             return confirmPingOnce('Use KOS commands in the KOS channel.');
         }
     }
 
     // --- ADD PLAYER ---
-    if (cmd === '^ka' && !handled) {
-        handled = true;
+    if (cmd === '^ka') {
         const name = p[1], username = p[2];
         if (!name || !username) return confirmPingOnce('Name and username required.');
         if (kosData.players.some(x => norm(x.name) === norm(name))) return confirmPingOnce('Player already exists.');
@@ -235,15 +234,12 @@ client.on('messageCreate', async msg => {
     }
 
     // --- REMOVE PLAYER ---
-    else if (cmd === '^kr' && !handled) {
-        handled = true;
+    if (cmd === '^kr') {
         const name = p[1];
         if (!name) return confirmPingOnce('Name required.');
         const player = kosData.players.find(x => norm(x.name) === norm(name));
         if (!player) return confirmPingOnce('Player not found.');
-        if (msg.author.id !== OWNER_ID &&
-            !canUsePriority(msg) &&
-            player.addedBy !== msg.author.id)
+        if (msg.author.id !== OWNER_ID && !canUsePriority(msg) && player.addedBy !== msg.author.id)
             return confirmPingOnce('You cannot remove this player.');
         kosData.players = kosData.players.filter(x => norm(x.name) !== norm(name));
         kosData.topPriority = kosData.topPriority.filter(x => x !== norm(name));
@@ -252,8 +248,7 @@ client.on('messageCreate', async msg => {
     }
 
     // --- PRIORITY ---
-    else if (['^pa','^p','^pr'].includes(cmd) && !handled) {
-        handled = true;
+    if (['^pa','^p','^pr'].includes(cmd)) {
         if (!canUsePriority(msg)) return confirmPingOnce('You are not allowed to use priority commands.');
         const name = p[1];
         if (!name) return confirmPingOnce('Name required.');
@@ -288,8 +283,7 @@ client.on('messageCreate', async msg => {
     }
 
     // --- ADD CLAN ---
-    else if (cmd === '^kca' && !handled) {
-        handled = true;
+    if (cmd === '^kca') {
         const name = p[1], region = p[2];
         if (!name || !region) return confirmPingOnce('Clan name and region required.');
         const clanStr = `${region.toUpperCase()}»${name.toUpperCase()}`;
@@ -300,25 +294,22 @@ client.on('messageCreate', async msg => {
     }
 
     // --- REMOVE CLAN ---
-    else if (cmd === '^kcr' && !handled) {
-        handled = true;
+    if (cmd === '^kcr') {
         const name = p[1], region = p[2];
         if (!name || !region) return confirmPingOnce('Clan name and region required.');
         const clanStr = `${region.toUpperCase()}»${name.toUpperCase()}`;
         const clan = kosData.clans.find(c => c.clan === clanStr);
         if (!clan) return confirmPingOnce('Clan not found.');
-        if (msg.author.id !== OWNER_ID &&
-            !canUsePriority(msg) &&
-            clan.addedBy !== msg.author.id)
+        if (msg.author.id !== OWNER_ID && !canUsePriority(msg) && clan.addedBy !== msg.author.id)
             return confirmPingOnce('You cannot remove this clan.');
         kosData.clans = kosData.clans.filter(c => c.clan !== clanStr);
         saveData();
         return confirmPingOnce(`Removed clan ${clanStr}`);
     }
 
-    // Update list once if a command was handled
+    // Update KOS list silently if a command was handled
     if (handled && kosData.listData.channelId) {
-        const ch = await client.channels.fetch(kosData.listData.channelId).catch(()=>null);
+        const ch = await client.channels.fetch(kosData.listData.channelId).catch(() => null);
         if (ch) updateKosList(ch);
     }
 });
@@ -331,25 +322,23 @@ client.on('interactionCreate', async i => {
 
     try {
         if (i.commandName === 'panel') {
-            await i.deferReply({ flags: 64 });
             await updatePanel(i.channel);
-            return i.editReply({ content: 'Panel updated.' });
+            if (!i.replied && !i.deferred) await i.reply({ content: 'Panel updated.', ephemeral: true });
         }
 
         if (i.commandName === 'list') {
-            await i.deferReply({ flags: 64 });
             await updateKosList(i.channel);
-            return i.editReply({ content: 'KOS list updated.' });
+            if (!i.replied && !i.deferred) await i.reply({ content: 'KOS list updated.', ephemeral: true });
         }
 
         if (i.commandName === 'submission') {
             kosData.listData.channelId = i.channelId;
             saveData();
-            if (!i.replied) await i.reply({ content: `Submission channel set to <#${i.channelId}>`, flags: 64 }).catch(()=>{});
+            if (!i.replied && !i.deferred) await i.reply({ content: `Submission channel set to <#${i.channelId}>`, ephemeral: true });
         }
     } catch (e) {
         console.error('Slash command error:', e);
-        if (!i.replied && !i.deferred) i.reply({ content: 'Error occurred.', ephemeral: true }).catch(()=>{});
+        if (!i.replied && !i.deferred) await i.reply({ content: 'Error occurred.', ephemeral: true }).catch(()=>{});
     }
 });
 
