@@ -145,7 +145,6 @@ client.on('interactionCreate', async interaction => {
         if(interaction.user.id!==OWNER_ID) return interaction.reply({ content:'You are not allowed to use this.', ephemeral:true });
 
         const gifEmbed = new EmbedBuilder()
-            .setTitle('KOS Tutorial GIF')
             .setImage('https://i.imgur.com/aV9NbA7.png')
             .setColor(0xFF0000);
 
@@ -183,3 +182,4 @@ setInterval(() => saveData(), 60_000); // save memory -> file every 60s
 
 // ---------------- Login ----------------
 client.login(process.env.TOKEN);
+
