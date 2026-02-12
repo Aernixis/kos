@@ -117,7 +117,7 @@ async function updatePanel(channel) {
     if (!channel) return;
 
     const gif = new EmbedBuilder()
-        .setImage('https://media4.giphy.com/media/iuttaLUMRLWEgJKRHx/giphy.gif')
+        .setImage('https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExc2FoODRjMmVtNmhncjkyZzY0ZGVwa2l3dzV0M3UyYmZ4bjVsZ2pnOCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/iuttaLUMRLWEgJKRHx/giphy.gif')
         .setColor(0xFF0000);
 
     const info = new EmbedBuilder()
@@ -125,17 +125,33 @@ async function updatePanel(channel) {
         .setColor(0xFF0000)
         .setDescription(`
 Players
-^ka name username
-^kr name
+This bot organizes LBG players and clans onto the KOS list for YX members.
 
-Priority (Role / Owner Only)
-^pa name username
-^p name
-^pr name
+Players
+To add players, use the command ^kos add or ^ka
+When adding players, place the name before the username
+Example:
+^kos add poison poisonrebuild
+^ka poison poisonrebuild
+To remove players, use the command ^kos remove or ^kr
+Removing players follows the same format as adding them
+Example:
+^kos remove poison poisonrebuild
+^kr poison poisonrebuild
 
 Clans
-^kca name region
-^kcr name region
+To add clans, use the command ^kos clan add or ^kca
+When adding clans, place the name before the region and use the short region code
+Example:
+^kos clan add yx eu
+^kca yx eu
+To remove clans, use the command ^kos clan remove or ^kcr
+Removing clans follows the same format as adding them
+Example:
+^kos clan remove yx eu
+^kcr yx eu
+
+Thank you for being a part of YX!
         `);
 
     async function send(id, embed) {
@@ -261,3 +277,4 @@ client.on('interactionCreate', async i => {
 
 // ---------------- LOGIN ----------------
 client.login(process.env.TOKEN);
+
