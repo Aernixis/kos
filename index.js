@@ -2,6 +2,7 @@ require('dotenv').config();
 const fs = require('fs');
 const { Client, GatewayIntentBits, Partials, EmbedBuilder } = require('discord.js');
 
+// ---------------- CLIENT ----------------
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -11,9 +12,12 @@ const client = new Client({
     partials: [Partials.Channel]
 });
 
+// ---------------- CONSTANTS ----------------
 const OWNER_ID = '1283217337084018749';
+const PRIORITY_ROLE_ID = '1412837397607092405';
 const DATA_FILE = './data.json';
 
+// ---------------- DATA ----------------
 let kosData = {
     players: [],
     topPriority: [],
@@ -41,12 +45,19 @@ function saveData() {
 
 const norm = s => s.toLowerCase();
 
+// ---------------- HELPERS ----------------
 function confirmPing(msg, text) {
     msg.channel.send(`<@${msg.author.id}> ${text}`)
-        .then(m => setTimeout(() => m.delete().catch(()=>{}), 3000));
+        .then(m => setTimeout(() => m.delete().catch(() => {}), 3000));
 }
 
-// ---------- FORMAT ----------
+function canUsePriority(msg) {
+    if (msg.author.id === OWNER_ID) return true;
+    if (!msg.member) return false;
+    return msg.member.roles.cache.has(PRIORITY_ROLE_ID);
+}
+
+// ---------------- FORMAT ----------------
 function formatPriority() {
     return kosData.topPriority
         .map(n => kosData.players.find(p => norm(p.name) === n)?.name || n)
@@ -57,7 +68,7 @@ function formatPriority() {
 function formatPlayers() {
     return kosData.players
         .filter(p => !kosData.topPriority.includes(norm(p.name)))
-        .sort((a,b)=>a.name.localeCompare(b.name))
+        .sort((a, b) => a.name.localeCompare(b.name))
         .map(p => `${p.name} : ${p.username}`)
         .join('\n') || 'None';
 }
@@ -66,9 +77,10 @@ function formatClans() {
     return kosData.clans.sort().join('\n') || 'None';
 }
 
-// ---------- LIST UPDATE ----------
+// ---------------- LIST UPDATE ----------------
 async function updateKosList(channel) {
     if (!channel) return;
+    kosData.listData.channelId = channel.id;
 
     async function send(id, content) {
         try {
@@ -100,8 +112,10 @@ async function updateKosList(channel) {
     saveData();
 }
 
-// ---------- PANEL ----------
+// ---------------- PANEL ----------------
 async function updatePanel(channel) {
+    if (!channel) return;
+
     const gif = new EmbedBuilder()
         .setImage('https://media4.giphy.com/media/iuttaLUMRLWEgJKRHx/giphy.gif')
         .setColor(0xFF0000);
@@ -109,44 +123,30 @@ async function updatePanel(channel) {
     const info = new EmbedBuilder()
         .setTitle('KOS Submission System')
         .setColor(0xFF0000)
-        .setDescription('KOS Submission System
-This bot organizes LBG players and clans onto the KOS list for YX members.
-
+        .setDescription(`
 Players
-To add players, use the command ^kos add or ^ka
-When adding players, place the name before the username
-Example:
-^kos add poison poisonrebuild
-^ka poison poisonrebuild
-To remove players, use the command ^kos remove or ^kr
-Removing players follows the same format as adding them
-Example:
-^kos remove poison poisonrebuild
-^kr poison poisonrebuild
+^ka name username
+^kr name
+
+Priority (Role / Owner Only)
+^pa name username
+^p name
+^pr name
 
 Clans
-To add clans, use the command ^kos clan add or ^kca
-When adding clans, place the name before the region and use the short region code
-Example:
-^kos clan add yx eu
-^kca yx eu
-To remove clans, use the command ^kos clan remove or ^kcr
-Removing clans follows the same format as adding them
-Example:
-^kos clan remove yx eu
-^kcr yx eu
-
-Thank you for being a part of YX!');
+^kca name region
+^kcr name region
+        `);
 
     async function send(id, embed) {
         try {
             if (id) {
                 const m = await channel.messages.fetch(id);
-                await m.edit({ embeds:[embed] });
+                await m.edit({ embeds: [embed] });
                 return m.id;
             }
         } catch {}
-        const m = await channel.send({ embeds:[embed] });
+        const m = await channel.send({ embeds: [embed] });
         return m.id;
     }
 
@@ -155,101 +155,109 @@ Thank you for being a part of YX!');
     saveData();
 }
 
-// ---------- PREFIX COMMANDS ----------
+// ---------------- PREFIX COMMANDS ----------------
 client.on('messageCreate', async msg => {
     if (msg.author.bot) return;
+
     const p = msg.content.trim().split(/\s+/);
     const cmd = p[0].toLowerCase();
 
-    // ---- ADD PLAYER ----
+    // ADD PLAYER
     if (cmd === '^ka') {
         const name = p[1], user = p[2];
-        if (!name || !user) return confirmPing(msg,'Name and username required.');
+        if (!name || !user) return confirmPing(msg, 'Name and username required.');
         if (kosData.players.some(x => norm(x.name) === norm(name)))
-            return confirmPing(msg,'Player already exists.');
-        kosData.players.push({ name, username:user });
+            return confirmPing(msg, 'Player already exists.');
+        kosData.players.push({ name, username: user });
         saveData();
-        confirmPing(msg,`Added ${name}`);
+        confirmPing(msg, `Added ${name}`);
         return;
     }
 
-    // ---- REMOVE PLAYER ----
+    // REMOVE PLAYER (FULL)
     if (cmd === '^kr') {
         const name = p[1];
-        if (!name) return confirmPing(msg,'Name required.');
+        if (!name) return confirmPing(msg, 'Name required.');
         kosData.players = kosData.players.filter(x => norm(x.name) !== norm(name));
         kosData.topPriority = kosData.topPriority.filter(x => x !== norm(name));
         saveData();
-        confirmPing(msg,`Removed ${name}`);
+        confirmPing(msg, `Removed ${name}`);
         return;
     }
 
-    // ---- PRIORITY ADD ----
-    if (cmd === '^pa') {
-        const name = p[1], user = p[2];
-        if (!name) return confirmPing(msg,'Name required.');
-        let player = kosData.players.find(x => norm(x.name) === norm(name));
-        if (!player) {
-            if (!user) return confirmPing(msg,'Username required.');
-            kosData.players.push({ name, username:user });
+    // PRIORITY (LOCKED)
+    if (['^pa', '^p', '^pr'].includes(cmd)) {
+        if (!canUsePriority(msg))
+            return confirmPing(msg, 'You are not allowed to use priority commands.');
+
+        const name = p[1];
+        if (!name) return confirmPing(msg, 'Name required.');
+        const key = norm(name);
+
+        // ^pa
+        if (cmd === '^pa') {
+            const user = p[2];
+            if (!kosData.players.some(x => norm(x.name) === key)) {
+                if (!user) return confirmPing(msg, 'Username required.');
+                kosData.players.push({ name, username: user });
+            }
+            if (!kosData.topPriority.includes(key))
+                kosData.topPriority.push(key);
+            saveData();
+            confirmPing(msg, `Priority added: ${name}`);
+            return;
         }
-        if (!kosData.topPriority.includes(norm(name)))
-            kosData.topPriority.push(norm(name));
-        saveData();
-        confirmPing(msg,`Priority added: ${name}`);
-        return;
-    }
 
-    // ---- PROMOTE ----
-    if (cmd === '^p') {
-        const name = p[1];
-        if (!kosData.players.some(x => norm(x.name) === norm(name)))
-            return confirmPing(msg,'Player must exist.');
-        if (!kosData.topPriority.includes(norm(name)))
-            kosData.topPriority.push(norm(name));
-        saveData();
-        confirmPing(msg,`Promoted ${name}`);
-        return;
-    }
+        // ^p
+        if (cmd === '^p') {
+            if (!kosData.players.some(x => norm(x.name) === key))
+                return confirmPing(msg, 'Player must already be on the KOS list.');
+            if (!kosData.topPriority.includes(key))
+                kosData.topPriority.push(key);
+            saveData();
+            confirmPing(msg, `Promoted: ${name}`);
+            return;
+        }
 
-    // ---- DEMOTE ----
-    if (cmd === '^pr') {
-        const name = p[1];
-        kosData.topPriority = kosData.topPriority.filter(x => x !== norm(name));
-        saveData();
-        confirmPing(msg,`Demoted ${name}`);
-        return;
+        // ^pr
+        if (cmd === '^pr') {
+            kosData.topPriority = kosData.topPriority.filter(x => x !== key);
+            saveData();
+            confirmPing(msg, `Demoted: ${name}`);
+            return;
+        }
     }
 
     if (kosData.listData.channelId) {
-        const ch = await client.channels.fetch(kosData.listData.channelId).catch(()=>null);
+        const ch = await client.channels.fetch(kosData.listData.channelId).catch(() => null);
         if (ch) updateKosList(ch);
     }
 });
 
-// ---------- SLASH ----------
+// ---------------- SLASH ----------------
 client.on('interactionCreate', async i => {
     if (!i.isChatInputCommand()) return;
     if (i.user.id !== OWNER_ID)
-        return i.reply({content:'Not allowed',ephemeral:true});
+        return i.reply({ content: 'Not allowed.', ephemeral: true });
 
     try {
         if (i.commandName === 'panel') {
-            await i.deferReply({ ephemeral:true });
+            await i.deferReply({ ephemeral: true });
             await updatePanel(i.channel);
             return i.editReply('Panel updated.');
         }
 
         if (i.commandName === 'list') {
-            await i.deferReply({ ephemeral:true });
+            await i.deferReply({ ephemeral: true });
             await updateKosList(i.channel);
             return i.editReply('KOS list updated.');
         }
     } catch (e) {
         console.error(e);
-        if (!i.replied) i.reply({content:'Error occurred.',ephemeral:true});
+        if (!i.replied)
+            i.reply({ content: 'Error occurred.', ephemeral: true });
     }
 });
 
+// ---------------- LOGIN ----------------
 client.login(process.env.TOKEN);
-
