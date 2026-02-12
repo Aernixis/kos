@@ -38,12 +38,9 @@ if (fs.existsSync(DATA_FILE)) {
 }
 
 // ---------------- DATA NORMALIZATION ----------------
-// Normalize clans to objects with addedBy
 if (kosData.clans.length > 0 && typeof kosData.clans[0] === 'string') {
     kosData.clans = kosData.clans.map(c => ({ clan: c, addedBy: null }));
 }
-
-// Normalize players to have addedBy if missing
 kosData.players = kosData.players.map(p => ({ ...p, addedBy: p.addedBy || null }));
 
 // ---------------- SAVE ----------------
@@ -216,6 +213,13 @@ client.on('messageCreate', async msg => {
         } catch {}
     }
 
+    async function tryUpdateKosList() {
+        if (kosData.listData.channelId) {
+            const ch = await client.channels.fetch(kosData.listData.channelId).catch(() => null);
+            if (ch) updateKosList(ch); // silent update
+        }
+    }
+
     // --- Enforce submission channel ---
     if (kosData.listData.channelId && msg.channel.id !== kosData.listData.channelId) {
         if (['^ka','^kr','^pa','^p','^pr','^kca','^kcr'].includes(cmd)) {
@@ -230,7 +234,9 @@ client.on('messageCreate', async msg => {
         if (kosData.players.some(x => norm(x.name) === norm(name))) return confirmPingOnce('Player already exists.');
         kosData.players.push({ name, username, addedBy: msg.author.id });
         saveData();
-        return confirmPingOnce(`Added ${name}`);
+        confirmPingOnce(`Added ${name}`);
+        await tryUpdateKosList();
+        return;
     }
 
     // --- REMOVE PLAYER ---
@@ -244,7 +250,9 @@ client.on('messageCreate', async msg => {
         kosData.players = kosData.players.filter(x => norm(x.name) !== norm(name));
         kosData.topPriority = kosData.topPriority.filter(x => x !== norm(name));
         saveData();
-        return confirmPingOnce(`Removed ${name}`);
+        confirmPingOnce(`Removed ${name}`);
+        await tryUpdateKosList();
+        return;
     }
 
     // --- PRIORITY ---
@@ -261,24 +269,32 @@ client.on('messageCreate', async msg => {
                 kosData.players.push({ name, username: username || 'N/A', addedBy: msg.author.id });
                 kosData.topPriority.push(key);
                 saveData();
-                return confirmPingOnce(`${name} added to priority`);
+                confirmPingOnce(`${name} added to priority`);
+                await tryUpdateKosList();
+                return;
             }
             if (!kosData.topPriority.includes(key)) kosData.topPriority.push(key);
             saveData();
-            return confirmPingOnce(`Prioritized ${name}`);
+            confirmPingOnce(`Prioritized ${name}`);
+            await tryUpdateKosList();
+            return;
         }
 
         if (cmd === '^p') {
             if (!kosData.players.some(x => norm(x.name) === key)) return confirmPingOnce('Player must already be on the KOS list.');
             if (!kosData.topPriority.includes(key)) kosData.topPriority.push(key);
             saveData();
-            return confirmPingOnce(`Prioritized ${name}`);
+            confirmPingOnce(`Prioritized ${name}`);
+            await tryUpdateKosList();
+            return;
         }
 
         if (cmd === '^pr') {
             kosData.topPriority = kosData.topPriority.filter(x => x !== key);
             saveData();
-            return confirmPingOnce(`Demoted ${name}`);
+            confirmPingOnce(`Demoted ${name}`);
+            await tryUpdateKosList();
+            return;
         }
     }
 
@@ -290,7 +306,9 @@ client.on('messageCreate', async msg => {
         if (kosData.clans.some(c => c.clan === clanStr)) return confirmPingOnce('Clan already exists.');
         kosData.clans.push({ clan: clanStr, addedBy: msg.author.id });
         saveData();
-        return confirmPingOnce(`Added clan ${clanStr}`);
+        confirmPingOnce(`Added clan ${clanStr}`);
+        await tryUpdateKosList();
+        return;
     }
 
     // --- REMOVE CLAN ---
@@ -304,13 +322,9 @@ client.on('messageCreate', async msg => {
             return confirmPingOnce('You cannot remove this clan.');
         kosData.clans = kosData.clans.filter(c => c.clan !== clanStr);
         saveData();
-        return confirmPingOnce(`Removed clan ${clanStr}`);
-    }
-
-    // Update KOS list silently if a command was handled
-    if (handled && kosData.listData.channelId) {
-        const ch = await client.channels.fetch(kosData.listData.channelId).catch(() => null);
-        if (ch) updateKosList(ch);
+        confirmPingOnce(`Removed clan ${clanStr}`);
+        await tryUpdateKosList();
+        return;
     }
 });
 
