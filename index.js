@@ -59,7 +59,34 @@ async function updatePanel(channel) {
         .setColor(0xFF0000);
     const tutorialEmbed = new EmbedBuilder()
         .setTitle('KOS Submission System')
-        .setDescription(`This bot organizes LBG players and clans onto the KOS list for YX members.\n\n**Players**\n* To add players, use ^kos add or ^ka\n* To remove players, use ^kos remove or ^kr\n**Clans**\n* To add clans, use ^kos clan add or ^kca\n* To remove clans, use ^kos clan remove or ^kcr\nThank you for being a part of YX!`)
+        .setDescription(`KOS Submission System
+This bot organizes LBG players and clans onto the KOS list for YX members.
+
+Players
+* To add players, use the command ^kos add or ^ka
+* When adding players, place the name before the username
+Example:
+^kos add poison poisonrebuild
+^ka poison poisonrebuild
+* To remove players, use the command ^kos remove or ^kr
+* Removing players follows the same format as adding them
+Example:
+^kos remove poison poisonrebuild
+^kr poison poisonrebuild
+
+Clans
+* To add clans, use the command ^kos clan add or ^kca
+* When adding clans, place the name before the region and use the short region code
+Example:
+^kos clan add yx eu
+^kca yx eu
+* To remove clans, use the command ^kos clan remove or ^kcr
+* Removing clans follows the same format as adding them
+Example:
+^kos clan remove yx eu
+^kcr yx eu
+
+Thank you for being a part of YX!`)
         .setColor(0xFF0000);
 
     // GIF
@@ -221,3 +248,4 @@ setInterval(saveData, 60_000);
 
 // ---------------- Login ----------------
 client.login(process.env.TOKEN);
+
