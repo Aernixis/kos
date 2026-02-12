@@ -117,11 +117,11 @@ async function updateKosList(channel) {
 async function updatePanel(channel) {
     if (!channel) return;
 
-    const gif = new EmbedBuilder()
+    const gifEmbed = new EmbedBuilder()
         .setImage('https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExc2FoODRjMmVtNmhncjkyZzY0ZGVwa2l3dzV0M3UyYmZ4bjVsZ2pnOCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/iuttaLUMRLWEgJKRHx/giphy.gif')
         .setColor(0xFF0000);
 
-    const info = new EmbedBuilder()
+    const infoEmbed = new EmbedBuilder()
         .setTitle('KOS Submission System')
         .setColor(0xFF0000)
         .setDescription(`
@@ -154,20 +154,24 @@ Example:
 Thank you for being apart of YX!
         `);
 
-    async function send(id, embed) {
+    async function fetchOrSend(id, embed) {
+        if (!id) {
+            const msg = await channel.send({ embeds: [embed] });
+            return msg.id;
+        }
         try {
-            if (id) {
-                const m = await channel.messages.fetch(id);
-                await m.edit({ embeds: [embed] });
-                return m.id;
-            }
-        } catch {}
-        const m = await channel.send({ embeds: [embed] });
-        return m.id;
+            const msg = await channel.messages.fetch(id);
+            await msg.edit({ embeds: [embed] });
+            return msg.id;
+        } catch {
+            const msg = await channel.send({ embeds: [embed] });
+            return msg.id;
+        }
     }
 
-    kosData.panelMessages.gif = await send(kosData.panelMessages.gif, gif);
-    kosData.panelMessages.tutorial = await send(kosData.panelMessages.tutorial, info);
+    kosData.panelMessages.gif = await fetchOrSend(kosData.panelMessages.gif, gifEmbed);
+    kosData.panelMessages.tutorial = await fetchOrSend(kosData.panelMessages.tutorial, infoEmbed);
+
     saveData();
 }
 
@@ -210,12 +214,17 @@ client.on('messageCreate', async msg => {
         // ^pa = add + prioritize
         if (cmd === '^pa') {
             const username = p[2];
-            if (!kosData.players.some(x => norm(x.name) === key)) {
+            const playerExists = kosData.players.some(x => norm(x.name) === key);
+            if (!playerExists) {
                 kosData.players.push({ name, username: username || 'N/A' });
+                kosData.topPriority.push(key);
+                saveData();
+                return confirmPing(msg, `${name} added to priority`);
             }
+            // Existing player → promote only
             if (!kosData.topPriority.includes(key)) kosData.topPriority.push(key);
             saveData();
-            confirmPing(msg, `Prioritized ${name}`);
+            return confirmPing(msg, `Prioritized ${name}`);
         }
 
         // ^p = promote existing
@@ -251,23 +260,23 @@ client.on('interactionCreate', async i => {
 
     try {
         if (i.commandName === 'panel') {
-            if (!i.replied && !i.deferred) await i.deferReply({ ephemeral: true }).catch(()=>{});
+            if (!i.replied && !i.deferred) await i.deferReply({ flags: 64 }).catch(()=>{});
             await updatePanel(i.channel);
             if (i.deferred) await i.editReply({ content: 'Panel updated.' }).catch(()=>{});
-            else await i.reply({ content: 'Panel updated.', ephemeral: true }).catch(()=>{});
+            else await i.reply({ content: 'Panel updated.', flags: 64 }).catch(()=>{});
         }
 
         if (i.commandName === 'list') {
-            if (!i.replied && !i.deferred) await i.deferReply({ ephemeral: true }).catch(()=>{});
+            if (!i.replied && !i.deferred) await i.deferReply({ flags: 64 }).catch(()=>{});
             await updateKosList(i.channel);
             if (i.deferred) await i.editReply({ content: 'KOS list updated.' }).catch(()=>{});
-            else await i.reply({ content: 'KOS list updated.', ephemeral: true }).catch(()=>{});
+            else await i.reply({ content: 'KOS list updated.', flags: 64 }).catch(()=>{});
         }
 
         if (i.commandName === 'submission') {
             kosData.listData.channelId = i.channelId;
             saveData();
-            if (!i.replied) await i.reply({ content: `Submission channel set to <#${i.channelId}>`, ephemeral: true }).catch(()=>{});
+            if (!i.replied) await i.reply({ content: `Submission channel set to <#${i.channelId}>`, flags: 64 }).catch(()=>{});
         }
 
     } catch (e) {
