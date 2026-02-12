@@ -38,6 +38,7 @@ function confirmPing(msg, text){
        .then(reply => setTimeout(() => reply.delete().catch(()=>{}), 3000));
 }
 
+// ---------------- Format Lists ----------------
 function formatPlayers() {
     return kosData.players.slice().sort((a,b) => a.name.localeCompare(b.name))
         .map(p => `${p.name} : ${p.username || 'N/A'}`).join('\n') || 'None';
@@ -56,10 +57,10 @@ async function updatePanel(channel) {
     const gifEmbed = new EmbedBuilder()
         .setImage('https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExc2FoODRjMmVtNmhncjkyZzY0ZGVwa2l3dzV0M3UyYmZ4bjVsZ2pnOCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/iuttaLUMRLWEgJKRHx/giphy.gif')
         .setColor(0xFF0000);
-
     const tutorialEmbed = new EmbedBuilder()
         .setTitle('KOS Submission System')
         .setDescription(`KOS Submission System
+KOS Submission System
 KOS Submission System
 This bot organizes LBG players and clans onto the KOS list for YX members.
 
@@ -90,56 +91,86 @@ Example:
 Thank you for being a part of YX!`)
         .setColor(0xFF0000);
 
-    async function fetchOrSend(embed, msgId) {
-        if(msgId){
-            try {
-                const msg = await channel.messages.fetch(msgId);
-                await msg.edit({ embeds: [embed] });
-                return msg.id;
-            } catch {
-                const msg = await channel.send({ embeds: [embed] });
-                return msg.id;
-            }
-        } else {
-            const msg = await channel.send({ embeds: [embed] });
-            return msg.id;
+    // GIF
+    if (kosData.panelMessages.gif) {
+        try {
+            const msg = await channel.messages.fetch(kosData.panelMessages.gif);
+            await msg.edit({ embeds: [gifEmbed] });
+        } catch {
+            const msg = await channel.send({ embeds: [gifEmbed] });
+            kosData.panelMessages.gif = msg.id;
         }
+    } else {
+        const msg = await channel.send({ embeds: [gifEmbed] });
+        kosData.panelMessages.gif = msg.id;
     }
 
-    kosData.panelMessages.gif = await fetchOrSend(gifEmbed, kosData.panelMessages.gif);
-    kosData.panelMessages.tutorial = await fetchOrSend(tutorialEmbed, kosData.panelMessages.tutorial);
+    // Tutorial
+    if (kosData.panelMessages.tutorial) {
+        try {
+            const msg = await channel.messages.fetch(kosData.panelMessages.tutorial);
+            await msg.edit({ embeds: [tutorialEmbed] });
+        } catch {
+            const msg = await channel.send({ embeds: [tutorialEmbed] });
+            kosData.panelMessages.tutorial = msg.id;
+        }
+    } else {
+        const msg = await channel.send({ embeds: [tutorialEmbed] });
+        kosData.panelMessages.tutorial = msg.id;
+    }
 
     saveData();
 }
 
 // ---------------- KOS List ----------------
 async function updateKosList(channel) {
-    if (!channel) return;
     kosData.listData.channelId = channel.id;
 
     const playersText = '```–––––––– PLAYERS ––––––\n' + formatPlayers() + '\n```';
     const priorityText = '```–––––––– PRIORITY ––––––\n' + formatPriority() + '\n```';
     const clansText = '```–––––––– CLANS ––––––\n' + formatClans() + '\n```';
 
-    async function fetchOrSend(msgId, content) {
-        if (msgId) {
-            try {
-                const msg = await channel.messages.fetch(msgId);
-                await msg.edit({ content });
-                return msg.id;
-            } catch {
-                const msg = await channel.send({ content });
-                return msg.id;
-            }
-        } else {
-            const msg = await channel.send({ content });
-            return msg.id;
+    // Players
+    if(kosData.listData.playersMessageId) {
+        try {
+            const msg = await channel.messages.fetch(kosData.listData.playersMessageId);
+            await msg.edit(playersText);
+        } catch {
+            const msg = await channel.send(playersText);
+            kosData.listData.playersMessageId = msg.id;
         }
+    } else {
+        const msg = await channel.send(playersText);
+        kosData.listData.playersMessageId = msg.id;
     }
 
-    kosData.listData.playersMessageId = await fetchOrSend(kosData.listData.playersMessageId, playersText);
-    kosData.listData.priorityMessageId = await fetchOrSend(kosData.listData.priorityMessageId, priorityText);
-    kosData.listData.clansMessageId = await fetchOrSend(kosData.listData.clansMessageId, clansText);
+    // Priority
+    if(kosData.listData.priorityMessageId) {
+        try {
+            const msg = await channel.messages.fetch(kosData.listData.priorityMessageId);
+            await msg.edit(priorityText);
+        } catch {
+            const msg = await channel.send(priorityText);
+            kosData.listData.priorityMessageId = msg.id;
+        }
+    } else {
+        const msg = await channel.send(priorityText);
+        kosData.listData.priorityMessageId = msg.id;
+    }
+
+    // Clans
+    if(kosData.listData.clansMessageId) {
+        try {
+            const msg = await channel.messages.fetch(kosData.listData.clansMessageId);
+            await msg.edit(clansText);
+        } catch {
+            const msg = await channel.send(clansText);
+            kosData.listData.clansMessageId = msg.id;
+        }
+    } else {
+        const msg = await channel.send(clansText);
+        kosData.listData.clansMessageId = msg.id;
+    }
 
     saveData();
 }
@@ -174,30 +205,27 @@ client.on('messageCreate', async msg => {
     // Add/Remove clan
     if(['^kca','^kcr','^kos'].includes(prefix)){
         let action = parts[1]?.toLowerCase() || '';
-        let name, region;
-
-        if(prefix==='^kca' || prefix==='^kcr'){
-            action = prefix==='^kca' ? 'add' : 'remove';
-            name = parts[2]; 
-            region = parts[3];
+        let name = '';
+        let region = '';
+        if(prefix==='^kca'||prefix==='^kcr'){
+            action = prefix==='^kca'?'add':'remove';
+            name = parts[2];
+            region = parts[3] || '';
         } else if(action==='clan'){
-            action = parts[2]?.toLowerCase();
+            action = parts[2]?.toLowerCase() || '';
             name = parts[3];
-            region = parts[4];
+            region = parts[4] || '';
         }
-
         if(!name || !region) return confirmPing(msg,'Clan name and region required.');
-        const formattedClan = `${region.toUpperCase()}»${name.toUpperCase()}`;
-
+        const formatted = `${region.toUpperCase()}»${name.toUpperCase()}`;
         if(action==='add'){
-            if(kosData.clans.includes(formattedClan)) return confirmPing(msg,'Clan already exists.');
-            kosData.clans.push(formattedClan);
+            if(kosData.clans.some(c=>c.toLowerCase()===formatted.toLowerCase())) return confirmPing(msg,'Clan already exists.');
+            kosData.clans.push(formatted);
             confirmPing(msg,'Clan added!');
         } else if(action==='remove'){
-            kosData.clans = kosData.clans.filter(c=>c!==formattedClan);
+            kosData.clans = kosData.clans.filter(c=>c.toLowerCase()!==formatted.toLowerCase());
             confirmPing(msg,'Clan removed!');
         }
-
         if(kosData.listData.channelId) updateKosList(await client.channels.fetch(kosData.listData.channelId));
     }
 });
@@ -205,23 +233,25 @@ client.on('messageCreate', async msg => {
 // ---------------- Slash Commands ----------------
 client.on('interactionCreate', async interaction => {
     if(!interaction.isChatInputCommand()) return;
-
     if(interaction.user.id!==OWNER_ID) 
         return interaction.reply({ content:'Not allowed.', ephemeral:true });
 
+    // Defer the reply first
+    await interaction.deferReply({ ephemeral: true });
+
     if(interaction.commandName==='panel'){
         await updatePanel(interaction.channel);
-        return interaction.reply({ content:'Panel posted/updated!', ephemeral:true });
+        return interaction.editReply({ content:'Panel posted/updated!' });
     }
 
     if(interaction.commandName==='list'){
         await updateKosList(interaction.channel);
-        return interaction.reply({ content:`KOS list posted/updated in <#${interaction.channel.id}>`, ephemeral:true });
+        return interaction.editReply({ content:`KOS list posted/updated in <#${interaction.channel.id}>` });
     }
 
     if(interaction.commandName==='submission'){
         kosData.listData.channelId = interaction.channelId;
-        return interaction.reply({ content:`Submission channel set to <#${interaction.channelId}>`, ephemeral:true });
+        return interaction.editReply({ content:`Submission channel set to <#${interaction.channelId}>` });
     }
 });
 
@@ -230,4 +260,3 @@ setInterval(saveData, 60_000);
 
 // ---------------- Login ----------------
 client.login(process.env.TOKEN);
-
