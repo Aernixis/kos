@@ -82,13 +82,6 @@ function formatClans() {
         .join('\n');
 }
 
-function contentWithExistingFormatting(type) {
-    if (type === 'players') return `–––––––– PLAYERS ––––––\n${formatPlayers()}`;
-    if (type === 'priority') return `–––––––– PRIORITY ––––––\n${formatPriority()}`;
-    if (type === 'clans') return `–––––––– CLANS ––––––\n${formatClans()}`;
-    return '';
-}
-
 // ---------------- LIST UPDATE ----------------
 async function updateKosList(channel) {
     if (!channel || listUpdating) return;
@@ -111,21 +104,24 @@ async function updateKosList(channel) {
     kosData.listData.playersMessageId = await fetchOrSend(
         kosData.listData.playersMessageId,
         `\`\`\`
-${contentWithExistingFormatting('players')}
+–––––––– PLAYERS ––––––
+${formatPlayers()}
 \`\`\``
     );
 
     kosData.listData.priorityMessageId = await fetchOrSend(
         kosData.listData.priorityMessageId,
         `\`\`\`
-${contentWithExistingFormatting('priority')}
+–––––––– PRIORITY ––––––
+${formatPriority()}
 \`\`\``
     );
 
     kosData.listData.clansMessageId = await fetchOrSend(
         kosData.listData.clansMessageId,
         `\`\`\`
-${contentWithExistingFormatting('clans')}
+–––––––– CLANS ––––––
+${formatClans()}
 \`\`\``
     );
 
@@ -216,7 +212,7 @@ client.on('messageCreate', async msg => {
     async function tryUpdateKosList() {
         if (kosData.listData.channelId) {
             const ch = await client.channels.fetch(kosData.listData.channelId).catch(() => null);
-            if (ch) updateKosList(ch); // silent update
+            if (ch) updateKosList(ch);
         }
     }
 
@@ -234,9 +230,8 @@ client.on('messageCreate', async msg => {
         if (kosData.players.some(x => norm(x.name) === norm(name))) return confirmPingOnce('Player already exists.');
         kosData.players.push({ name, username, addedBy: msg.author.id });
         saveData();
-        confirmPingOnce(`Added ${name}`);
         await tryUpdateKosList();
-        return;
+        return confirmPingOnce(`Added ${name}`);
     }
 
     // --- REMOVE PLAYER ---
@@ -250,9 +245,8 @@ client.on('messageCreate', async msg => {
         kosData.players = kosData.players.filter(x => norm(x.name) !== norm(name));
         kosData.topPriority = kosData.topPriority.filter(x => x !== norm(name));
         saveData();
-        confirmPingOnce(`Removed ${name}`);
         await tryUpdateKosList();
-        return;
+        return confirmPingOnce(`Removed ${name}`);
     }
 
     // --- PRIORITY ---
@@ -269,32 +263,28 @@ client.on('messageCreate', async msg => {
                 kosData.players.push({ name, username: username || 'N/A', addedBy: msg.author.id });
                 kosData.topPriority.push(key);
                 saveData();
-                confirmPingOnce(`${name} added to priority`);
                 await tryUpdateKosList();
-                return;
+                return confirmPingOnce(`${name} added to priority`);
             }
             if (!kosData.topPriority.includes(key)) kosData.topPriority.push(key);
             saveData();
-            confirmPingOnce(`Prioritized ${name}`);
             await tryUpdateKosList();
-            return;
+            return confirmPingOnce(`Prioritized ${name}`);
         }
 
         if (cmd === '^p') {
             if (!kosData.players.some(x => norm(x.name) === key)) return confirmPingOnce('Player must already be on the KOS list.');
             if (!kosData.topPriority.includes(key)) kosData.topPriority.push(key);
             saveData();
-            confirmPingOnce(`Prioritized ${name}`);
             await tryUpdateKosList();
-            return;
+            return confirmPingOnce(`Prioritized ${name}`);
         }
 
         if (cmd === '^pr') {
             kosData.topPriority = kosData.topPriority.filter(x => x !== key);
             saveData();
-            confirmPingOnce(`Demoted ${name}`);
             await tryUpdateKosList();
-            return;
+            return confirmPingOnce(`Demoted ${name}`);
         }
     }
 
@@ -306,9 +296,8 @@ client.on('messageCreate', async msg => {
         if (kosData.clans.some(c => c.clan === clanStr)) return confirmPingOnce('Clan already exists.');
         kosData.clans.push({ clan: clanStr, addedBy: msg.author.id });
         saveData();
-        confirmPingOnce(`Added clan ${clanStr}`);
         await tryUpdateKosList();
-        return;
+        return confirmPingOnce(`Added clan ${clanStr}`);
     }
 
     // --- REMOVE CLAN ---
@@ -322,9 +311,8 @@ client.on('messageCreate', async msg => {
             return confirmPingOnce('You cannot remove this clan.');
         kosData.clans = kosData.clans.filter(c => c.clan !== clanStr);
         saveData();
-        confirmPingOnce(`Removed clan ${clanStr}`);
         await tryUpdateKosList();
-        return;
+        return confirmPingOnce(`Removed clan ${clanStr}`);
     }
 });
 
