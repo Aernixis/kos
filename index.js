@@ -55,7 +55,7 @@ function formatClans() {
 // ---------------- Panel ----------------
 async function updatePanel(channel) {
     const gifEmbed = new EmbedBuilder()
-        .setImage('https://i.imgur.com/aV9NbA7.png')
+        .setImage('https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExc2FoODRjMmVtNmhncjkyZzY0ZGVwa2l3dzV0M3UyYmZ4bjVsZ2pnOCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/iuttaLUMRLWEgJKRHx/giphy.gif')
         .setColor(0xFF0000);
     const tutorialEmbed = new EmbedBuilder()
         .setTitle('KOS Submission System')
@@ -248,4 +248,5 @@ setInterval(saveData, 60_000);
 
 // ---------------- Login ----------------
 client.login(process.env.TOKEN);
+
 
