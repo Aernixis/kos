@@ -19,9 +19,9 @@ const DATA_FILE = './data.json';
 
 // ---------------- DATA ----------------
 let data = {
-  players: [],
-  priority: [],
-  clans: [],
+  players: [], // { name, username, addedBy }
+  priority: [], // array of player names
+  clans: [], // array of clan strings
   panelMessages: { gif: null, tutorial: null },
   listData: { channelId: null, playersMessageId: null, priorityMessageId: null, clansMessageId: null }
 };
@@ -32,28 +32,21 @@ function loadData() {
   try {
     const oldData = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
 
-    // Players
-    if (Array.isArray(oldData.players)) {
+    if (Array.isArray(oldData.players))
       data.players = oldData.players.map(p => ({
         name: String(p.name || '').trim(),
         username: p.username ? String(p.username).trim() : null,
         addedBy: p.addedBy || null
       }));
-    }
 
-    // Priority
-    if (Array.isArray(oldData.topPriority) && oldData.topPriority.length) {
+    if (Array.isArray(oldData.topPriority) && oldData.topPriority.length)
       data.priority = [...new Set(oldData.topPriority.map(p => String(p).trim()))];
-    } else if (Array.isArray(oldData.priority)) {
+    else if (Array.isArray(oldData.priority))
       data.priority = [...new Set(oldData.priority.map(p => String(p).trim()))];
-    }
 
-    // Clans
-    if (Array.isArray(oldData.clans)) {
+    if (Array.isArray(oldData.clans))
       data.clans = [...new Set(oldData.clans.map(c => typeof c === 'string' ? c.trim().toUpperCase() : null).filter(Boolean))];
-    }
 
-    // Panel & listData
     if (oldData.panelMessages) data.panelMessages = oldData.panelMessages;
     if (oldData.listData) data.listData = oldData.listData;
 
@@ -79,7 +72,7 @@ function canUsePriority(msg) {
 // ---------------- FORMATTING ----------------
 function formatPlayers() {
   return data.players
-    .filter(p => !data.priority.includes(norm(p.name)))
+    .filter(p => !data.priority.some(pr => norm(pr) === norm(p.name)))
     .sort((a,b) => a.name.localeCompare(b.name))
     .map(p => p.username ? `${p.name} : ${p.username}` : p.name)
     .join('\n') || 'None';
@@ -98,11 +91,8 @@ function formatClans() {
 
 // ---------------- KOS LIST UPDATE ----------------
 let listUpdating = false;
-
 async function updateKosList(channel) {
-  if (!channel || listUpdating) return;
-  if (!data.listData.channelId) return;
-
+  if (!channel || !data.listData.channelId || listUpdating) return;
   listUpdating = true;
 
   const sections = [
@@ -112,13 +102,13 @@ async function updateKosList(channel) {
   ];
 
   for (const section of sections) {
-    if (!section.key || !data.listData[section.key]) continue; // Only edit existing messages
+    if (!section.key || !data.listData[section.key]) continue; // only edit existing messages
     try {
       const msg = await channel.messages.fetch(data.listData[section.key]).catch(() => null);
       if (!msg) continue;
       const formatted = '```' + section.title + '\n' + section.content + '\n```';
       if (msg.content !== formatted) await msg.edit({ content: formatted });
-    } catch(e) {
+    } catch (e) {
       console.error('KOS update error', e);
     }
   }
@@ -129,7 +119,6 @@ async function updateKosList(channel) {
 
 // ---------------- PANEL ----------------
 let panelUpdating = false;
-
 async function updatePanel(channel) {
   if (!channel || panelUpdating) return;
   panelUpdating = true;
@@ -138,43 +127,22 @@ async function updatePanel(channel) {
     .setImage('https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExc2FoODRjMmVtNmhncjkyZzY0ZGVwa2l3dzV0M3UyYmZ4bjVsZ2pnOCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/iuttaLUMRLWEgJKRHx/giphy.gif')
     .setColor(0xFF0000);
 
-  const tutorialText = `
-KOS Submission System
-This bot organizes LBG players and clans onto the KOS list for YX members.
-
-Players
-To add players, use the command ^kos add or ^ka
-When adding players, place the name before the username
-Example:
-^kos add poison poisonrebuild
-^ka poison poisonrebuild
-To remove players, use the command ^kos remove or ^kr
-Removing players follows the same format as adding them
-Example:
-^kos remove poison poisonrebuild
-^kr poison poisonrebuild
-
-Clans
-To add clans, use the command ^kos clan add or ^kca
-When adding clans, place the name before the region and use the short region code
-Example:
-^kos clan add yx eu
-^kca yx eu
-To remove clans, use the command ^kos clan remove or ^kcr
-Removing clans follows the same format as adding them
-Example:
-^kos clan remove yx eu
-^kcr yx eu
-
-Thank you for being a part of YX!
-
-
-`;
-
   const infoEmbed = new EmbedBuilder()
     .setTitle('KOS Submission System')
     .setColor(0xFF0000)
-    .setDescription(tutorialText);
+    .setDescription(`
+This bot organizes LBG players and clans onto the KOS list for YX members.
+
+Players
+Use ^kos add or ^ka to add
+Use ^kos remove or ^kr to remove
+
+Clans
+Use ^kos clan add or ^kca to add
+Use ^kos clan remove or ^kcr to remove
+
+Thank you for being part of YX!
+  `);
 
   async function fetchOrSendEmbed(id, embed) {
     if (id) {
@@ -201,7 +169,7 @@ client.on('messageCreate', async msg => {
   let cmd = argsRaw.shift().toLowerCase();
   let args = [...argsRaw];
 
-  // Aliases
+  // Aliases for ^kos and ^priority
   if (cmd === '^kos') {
     const sub = args.shift()?.toLowerCase();
     if (sub === 'add') cmd = '^ka';
@@ -212,7 +180,6 @@ client.on('messageCreate', async msg => {
       else if (clanSub === 'remove') cmd = '^kcr';
     }
   }
-
   if (cmd === '^priority') {
     const sub = args.shift()?.toLowerCase();
     if (sub === 'add') cmd = '^pa';
@@ -223,8 +190,11 @@ client.on('messageCreate', async msg => {
   // Submission channel check
   if (data.listData.channelId && msg.channel.id !== data.listData.channelId) {
     if (['^ka','^kr','^p','^pa','^pr','^kca','^kcr'].includes(cmd)) {
-      const botMsg = await msg.channel.send(`Use KOS commands in <#${data.listData.channelId}>.`);
-      setTimeout(()=>{ botMsg.delete().catch(()=>{}); msg.delete().catch(()=>{}); },3000);
+      const botMsg = await msg.channel.send(`<@${msg.author.id}> Use KOS commands in <#${data.listData.channelId}>.`);
+      setTimeout(()=>{
+        botMsg.delete().catch(()=>{});
+        msg.delete().catch(()=>{});
+      }, 3000);
       return;
     }
   }
@@ -237,19 +207,18 @@ client.on('messageCreate', async msg => {
     const name = args.shift();
     const username = args.shift();
     if (!name || !username) return;
-    if (!data.players.some(p => p.name === name && p.username === username)) {
+    if (!data.players.some(p => norm(p.name) === norm(name) && p.username === username)) {
       data.players.push({ name, username, addedBy: msg.author.id });
       changed = true;
       actionText = `Added ${name} : ${username}`;
     }
   }
-
   if (cmd === '^kr') {
     const name = args.shift();
     const username = args.shift() || null;
     if (!name) return;
     const before = data.players.length;
-    data.players = data.players.filter(p => !(p.name === name && (username ? p.username === username : true)));
+    data.players = data.players.filter(p => !(norm(p.name) === norm(name) && (username ? p.username === username : true)));
     data.priority = data.priority.filter(p => norm(p) !== norm(name));
     if (before !== data.players.length) { changed = true; actionText = `Removed ${name}${username?` : ${username}`:''}`; }
   }
@@ -262,7 +231,6 @@ client.on('messageCreate', async msg => {
     const clan = `${region.toUpperCase()}»${name.toUpperCase()}`;
     if (!data.clans.includes(clan)) { data.clans.push(clan); changed = true; actionText = `Added clan ${clan}`; }
   }
-
   if (cmd === '^kcr') {
     const name = args.shift();
     const region = args.shift();
@@ -284,7 +252,6 @@ client.on('messageCreate', async msg => {
     }
     if (!data.priority.includes(name)) { data.priority.push(name); changed = true; actionText = `Added ${name} to priority`; }
   }
-
   if (cmd === '^pr') {
     const name = args.join(' ');
     if (!name) return;
@@ -308,7 +275,7 @@ client.on('messageCreate', async msg => {
     if (listChannel) updateKosList(listChannel).catch(console.error);
   }
 
-  // Send confirmation
+  // Send single confirmation
   if (actionText){
     const botMsg = await msg.channel.send(`<@${msg.author.id}> ${actionText}`);
     setTimeout(()=>{ botMsg.delete().catch(()=>{}); msg.delete().catch(()=>{}); },3000);
@@ -320,22 +287,23 @@ client.on('interactionCreate', async i => {
   if (!i.isChatInputCommand()) return;
 
   try {
-    if (i.commandName === 'panel') {
-      await updatePanel(i.channel);
-      await i.reply({ content: 'Panel updated.', ephemeral: true });
+    if (i.commandName === 'list') {
+      await i.deferReply({ ephemeral: true });
+      const listChannel = i.guild.channels.cache.get(data.listData.channelId);
+      if (listChannel) await updateKosList(listChannel);
+      await i.editReply({ content: 'KOS list updated.' });
     }
 
-    if (i.commandName === 'list') {
-      await updateKosList(i.channel);
-      await i.reply({ content: 'KOS list updated.', ephemeral: true });
+    if (i.commandName === 'panel') {
+      await i.deferReply({ ephemeral: true });
+      await updatePanel(i.channel);
+      await i.editReply({ content: 'Panel updated.' });
     }
 
     if (i.commandName === 'submission') {
       data.listData.channelId = i.channelId;
       saveData();
-      if (!i.replied && !i.deferred) {
-        await i.reply({ content: `Submission channel set to <#${i.channelId}>`, ephemeral: true });
-      }
+      await i.reply({ content: `Submission channel set to <#${i.channelId}>`, ephemeral: true });
     }
   } catch (e) {
     console.error('Slash command error:', e);
