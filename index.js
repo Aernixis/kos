@@ -91,9 +91,8 @@ async function updateKosList(channel) {
     async function fetchOrSend(id, content) {
         try {
             if (id) {
-                const msg = await channel.messages.fetch(id);
-                await msg.edit({ content });
-                return msg.id;
+                const msg = await channel.messages.fetch(id).catch(()=>null);
+                if (msg) return (await msg.edit({ content }))?.id;
             }
         } catch {}
         const msg = await channel.send({ content });
@@ -173,9 +172,8 @@ Thank you for being apart of YX!
     async function fetchOrSendEmbed(id, embed) {
         try {
             if (id) {
-                const msg = await channel.messages.fetch(id);
-                await msg.edit({ embeds: [embed] });
-                return msg.id;
+                const msg = await channel.messages.fetch(id).catch(()=>null);
+                if (msg) return (await msg.edit({ embeds: [embed] }))?.id;
             }
         } catch {}
         const msg = await channel.send({ embeds: [embed] });
@@ -197,45 +195,48 @@ client.on('messageCreate', async msg => {
     const p = msg.content.trim().split(/\s+/);
     const cmd = p[0].toLowerCase();
 
-    // handled flag ensures only one reply per command
     let handled = false;
 
+    // --- REPLY FUNCTION WITH SYNCHRONIZED DELETION ---
     async function sendReplyOnce(text) {
         if (handled) return;
         handled = true;
         try {
-            await msg.delete().catch(() => {});
             const botMsg = await msg.channel.send(`<@${msg.author.id}> ${text}`);
-            setTimeout(() => botMsg.delete().catch(() => {}), 3000);
+            setTimeout(() => {
+                botMsg.delete().catch(()=>{});
+                msg.delete().catch(()=>{});
+            }, 3000);
         } catch {}
     }
 
+    // --- UPDATE LIST ---
     async function updateList() {
         if (kosData.listData.channelId) {
-            const ch = await client.channels.fetch(kosData.listData.channelId).catch(() => null);
-            if (ch) updateKosList(ch); // async without reply
+            const ch = await client.channels.fetch(kosData.listData.channelId).catch(()=>null);
+            if (ch) updateKosList(ch);
         }
     }
 
-    // enforce KOS channel for commands
+    // enforce KOS channel
     if (kosData.listData.channelId && msg.channel.id !== kosData.listData.channelId) {
         if (['^ka','^kr','^pa','^p','^pr','^kca','^kcr'].includes(cmd)) {
             return sendReplyOnce('Use KOS commands in the KOS channel.');
         }
     }
 
-    // --- ADD PLAYER ---
+    // --- PLAYER AND CLAN COMMANDS ---
+    // ADD PLAYER
     if (cmd === '^ka') {
         const name = p[1], username = p[2];
         if (!name || !username) return sendReplyOnce('Name and username required.');
         if (kosData.players.some(x => norm(x.name) === norm(name))) return sendReplyOnce('Player already exists.');
         kosData.players.push({ name, username, addedBy: msg.author.id });
-        saveData();
-        updateList();
+        saveData(); updateList();
         return sendReplyOnce(`Added ${name}`);
     }
 
-    // --- REMOVE PLAYER ---
+    // REMOVE PLAYER
     if (cmd === '^kr') {
         const name = p[1];
         if (!name) return sendReplyOnce('Name required.');
@@ -245,12 +246,11 @@ client.on('messageCreate', async msg => {
             return sendReplyOnce('You cannot remove this player.');
         kosData.players = kosData.players.filter(x => norm(x.name) !== norm(name));
         kosData.topPriority = kosData.topPriority.filter(x => x !== norm(name));
-        saveData();
-        updateList();
+        saveData(); updateList();
         return sendReplyOnce(`Removed ${name}`);
     }
 
-    // --- PRIORITY ---
+    // PRIORITY
     if (['^pa','^p','^pr'].includes(cmd)) {
         if (!canUsePriority(msg)) return sendReplyOnce('You are not allowed to use priority commands.');
         const name = p[1];
@@ -259,49 +259,44 @@ client.on('messageCreate', async msg => {
 
         if (cmd === '^pa') {
             const username = p[2];
-            const playerExists = kosData.players.some(x => norm(x.name) === key);
-            if (!playerExists) {
+            const exists = kosData.players.some(x => norm(x.name) === key);
+            if (!exists) {
                 kosData.players.push({ name, username: username || 'N/A', addedBy: msg.author.id });
                 kosData.topPriority.push(key);
-                saveData();
-                updateList();
+                saveData(); updateList();
                 return sendReplyOnce(`${name} added to priority`);
             }
             if (!kosData.topPriority.includes(key)) kosData.topPriority.push(key);
-            saveData();
-            updateList();
+            saveData(); updateList();
             return sendReplyOnce(`Prioritized ${name}`);
         }
 
         if (cmd === '^p') {
             if (!kosData.players.some(x => norm(x.name) === key)) return sendReplyOnce('Player must already be on the KOS list.');
             if (!kosData.topPriority.includes(key)) kosData.topPriority.push(key);
-            saveData();
-            updateList();
+            saveData(); updateList();
             return sendReplyOnce(`Prioritized ${name}`);
         }
 
         if (cmd === '^pr') {
             kosData.topPriority = kosData.topPriority.filter(x => x !== key);
-            saveData();
-            updateList();
+            saveData(); updateList();
             return sendReplyOnce(`Demoted ${name}`);
         }
     }
 
-    // --- ADD CLAN ---
+    // ADD CLAN
     if (cmd === '^kca') {
         const name = p[1], region = p[2];
         if (!name || !region) return sendReplyOnce('Clan name and region required.');
         const clanStr = `${region.toUpperCase()}»${name.toUpperCase()}`;
         if (kosData.clans.some(c => c.clan === clanStr)) return sendReplyOnce('Clan already exists.');
         kosData.clans.push({ clan: clanStr, addedBy: msg.author.id });
-        saveData();
-        updateList();
+        saveData(); updateList();
         return sendReplyOnce(`Added clan ${clanStr}`);
     }
 
-    // --- REMOVE CLAN ---
+    // REMOVE CLAN
     if (cmd === '^kcr') {
         const name = p[1], region = p[2];
         if (!name || !region) return sendReplyOnce('Clan name and region required.');
@@ -311,8 +306,7 @@ client.on('messageCreate', async msg => {
         if (msg.author.id !== OWNER_ID && !canUsePriority(msg) && clan.addedBy !== msg.author.id)
             return sendReplyOnce('You cannot remove this clan.');
         kosData.clans = kosData.clans.filter(c => c.clan !== clanStr);
-        saveData();
-        updateList();
+        saveData(); updateList();
         return sendReplyOnce(`Removed clan ${clanStr}`);
     }
 });
