@@ -211,10 +211,11 @@ client.on('messageCreate', async msg => {
     else cmd = '^p';
   }
 
-  // Submission channel check
+  // ---------------- PUBLIC CHANNEL CHECK ----------------
   if (data.listData.channelId && msg.channel.id !== data.listData.channelId) {
     if (['^ka','^kr','^p','^pa','^pr','^kca','^kcr'].includes(cmd)) {
-      const botMsg = await msg.channel.send(`Use KOS commands in <#${data.listData.channelId}>.`);
+      // Public reply, command is ignored
+      const botMsg = await msg.channel.send(`KOS commands must be used in <#${data.listData.channelId}>.`);
       setTimeout(()=>{ botMsg.delete().catch(()=>{}); msg.delete().catch(()=>{}); },3000);
       return;
     }
@@ -321,7 +322,7 @@ client.on('interactionCreate', async i => {
     if (i.commandName === 'submission') {
       // Only the owner can set the submission channel
       if (i.user.id !== OWNER_ID) {
-        await i.reply({ content: `Only the bot owner can set the submission channel.` });
+        await i.reply({ content: `Only the bot owner can set the submission channel.`, ephemeral: true });
         return;
       }
 
@@ -329,8 +330,10 @@ client.on('interactionCreate', async i => {
       data.listData.channelId = i.channel.id;
       saveData();
 
+      // Ephemeral reply to owner
       await i.reply({
-        content: `This channel (<#${i.channel.id}>) has been set as the submission channel.`
+        content: `This channel (<#${i.channel.id}>) has been set as the submission channel.`,
+        ephemeral: true
       });
     }
   } catch (e) {
@@ -341,4 +344,3 @@ client.on('interactionCreate', async i => {
 
 // ---------------- LOGIN ----------------
 client.login(process.env.TOKEN);
-
