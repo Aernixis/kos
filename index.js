@@ -12,10 +12,9 @@ const client = new Client({
 });
 
 const OWNER_ID = '1283217337084018749';
-const PRIORITY_ROLE_ID = '1412837397607092405';
 const DATA_FILE = './data.json';
 
-let kosData = {
+let data = {
     players: [],
     priority: [],
     clans: [],
@@ -24,118 +23,113 @@ let kosData = {
 };
 
 if (fs.existsSync(DATA_FILE)) {
-    kosData = JSON.parse(fs.readFileSync(DATA_FILE));
+    data = JSON.parse(fs.readFileSync(DATA_FILE));
 }
 
-const save = () => fs.writeFileSync(DATA_FILE, JSON.stringify(kosData, null, 2));
+const save = () => fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
 const norm = s => s.toLowerCase();
-
-const replyLock = new Set();
 
 /* ===================== FORMAT ===================== */
 
-const fmtPlayer = p => p.username ? `${p.name} : ${p.username}` : p.name;
+const fmt = p => p.username ? `${p.name} : ${p.username}` : p.name;
 
-const formatPlayers = () =>
-    kosData.players
-        .filter(p => !kosData.priority.includes(norm(p.name)))
+const playersText = () =>
+    data.players
+        .filter(p => !data.priority.includes(norm(p.name)))
         .sort((a,b)=>a.name.localeCompare(b.name))
-        .map(fmtPlayer).join('\n') || 'None';
+        .map(fmt).join('\n') || 'None';
 
-const formatPriority = () =>
-    kosData.priority
-        .map(n => kosData.players.find(p=>norm(p.name)===n))
+const priorityText = () =>
+    data.priority
+        .map(n => data.players.find(p=>norm(p.name)===n))
         .filter(Boolean)
-        .map(fmtPlayer)
+        .map(fmt)
         .sort().join('\n') || 'None';
 
-const formatClans = () =>
-    kosData.clans.map(c=>c.clan).sort().join('\n') || 'None';
+const clansText = () =>
+    data.clans.map(c=>`${c.clan} ${c.region}`).sort().join('\n') || 'None';
 
-/* ===================== HARD MESSAGE CONTROL ===================== */
+/* ===================== MESSAGE CONTROL (FAST) ===================== */
 
-async function ensureSingleMessage(channel, storedId, content) {
-    const messages = await channel.messages.fetch({ limit: 50 });
-    const matches = messages.filter(m => m.content === content);
-
-    for (const m of matches.values()) {
-        if (m.id !== storedId) await m.delete().catch(()=>{});
-    }
-
-    if (storedId) {
-        const msg = await channel.messages.fetch(storedId).catch(()=>null);
+async function editOrCreate(channel, id, payload) {
+    if (id) {
+        const msg = await channel.messages.fetch(id).catch(()=>null);
         if (msg) {
-            await msg.edit(content);
+            await msg.edit(payload);
             return msg.id;
         }
     }
-
-    const msg = await channel.send(content);
+    const msg = await channel.send(payload);
     return msg.id;
 }
 
 async function updateList(channel) {
-    kosData.list.channelId = channel.id;
+    data.list.channelId = channel.id;
 
-    kosData.list.players = await ensureSingleMessage(
+    data.list.players = await editOrCreate(
         channel,
-        kosData.list.players,
-        `\`\`\`\n–––––––– PLAYERS ––––––\n${formatPlayers()}\n\`\`\``
+        data.list.players,
+        { content: `\`\`\`\n–––––– PLAYERS ––––––\n${playersText()}\n\`\`\`` }
     );
 
-    kosData.list.priority = await ensureSingleMessage(
+    data.list.priority = await editOrCreate(
         channel,
-        kosData.list.priority,
-        `\`\`\`\n–––––––– PRIORITY ––––––\n${formatPriority()}\n\`\`\``
+        data.list.priority,
+        { content: `\`\`\`\n–––––– PRIORITY ––––––\n${priorityText()}\n\`\`\`` }
     );
 
-    kosData.list.clans = await ensureSingleMessage(
+    data.list.clans = await editOrCreate(
         channel,
-        kosData.list.clans,
-        `\`\`\`\n–––––––– CLANS ––––––\n${formatClans()}\n\`\`\``
+        data.list.clans,
+        { content: `\`\`\`\n–––––– CLANS ––––––\n${clansText()}\n\`\`\`` }
     );
 
     save();
 }
 
+/* ===================== PANEL ===================== */
+
 async function updatePanel(channel) {
     const gif = new EmbedBuilder()
-        .setImage('https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExc2FoODRjMmVtNmhncjkyZzY0ZGVwa2l3dzV0M3UyYmZ4bjVsZ2pnOCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/iuttaLUMRLWEgJKRHx/giphy.gif')
-        .setColor(0xFF0000);
+        .setColor(0xFF0000)
+        .setImage('https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExc2FoODRjMmVtNmhncjkyZzY0ZGVwa2l3dzV0M3UyYmZ4bjVsZ2pnOCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/iuttaLUMRLWEgJKRHx/giphy.gif');
 
     const tutorial = new EmbedBuilder()
-        .setTitle('KOS Submission System')
         .setColor(0xFF0000)
+        .setTitle('KOS Submission System')
         .setDescription(`
 This bot organizes LBG players and clans onto the KOS list for YX members.
 
 Players
-To add players, use ^kos add or ^ka
+To add players, use the command ^kos add or ^ka
+When adding players, place the name before the username
+Example:
+^kos add poison poisonrebuild
 ^ka poison poisonrebuild
-To remove players, use ^kos remove or ^kr
+To remove players, use the command ^kos remove or ^kr
+Removing players follows the same format as adding them
+Example:
+^kos remove poison poisonrebuild
+^kr poison poisonrebuild
 
 Clans
-To add clans, use ^kos clan add or ^kca
+To add clans, use the command ^kos clan add or ^kca
+When adding clans, place the name before the region and use the short region code
+Example:
+^kos clan add yx eu
 ^kca yx eu
-To remove clans, use ^kos clan remove or ^kcr
+To remove clans, use the command ^kos clan remove or ^kcr
+Removing clans follows the same format as adding them
+Example:
+^kos clan remove yx eu
+^kcr yx eu
 
-Thank you for being a part of YX!
+Thank you for being apart of YX!
         `);
 
-    async function embedOnce(id, embed) {
-        if (id) {
-            const msg = await channel.messages.fetch(id).catch(()=>null);
-            if (msg) {
-                await msg.edit({ embeds:[embed] });
-                return msg.id;
-            }
-        }
-        const msg = await channel.send({ embeds:[embed] });
-        return msg.id;
-    }
+    data.panel.gif = await editOrCreate(channel, data.panel.gif, { embeds:[gif] });
+    data.panel.tutorial = await editOrCreate(channel, data.panel.tutorial, { embeds:[tutorial] });
 
-    kosData.panel.gif = await embedOnce(kosData.panel.gif, gif);
-    kosData.panel.tutorial = await embedOnce(kosData.panel.tutorial, tutorial);
     save();
 }
 
@@ -143,38 +137,43 @@ Thank you for being a part of YX!
 
 client.on('messageCreate', async msg => {
     if (msg.author.bot || !msg.content.startsWith('^')) return;
-    if (replyLock.has(msg.id)) return;
-    replyLock.add(msg.id);
 
-    const p = msg.content.split(/\s+/);
-    const cmd = p[0].toLowerCase();
+    const args = msg.content.split(/\s+/);
+    const cmd = args[0].toLowerCase();
 
-    const reply = async t => {
-        const m = await msg.channel.send(`<@${msg.author.id}> ${t}`);
+    const respond = async text => {
+        const m = await msg.channel.send(`<@${msg.author.id}> ${text}`);
         setTimeout(()=>{ m.delete().catch(()=>{}); msg.delete().catch(()=>{}); },3000);
     };
 
     if (cmd === '^ka') {
-        const [_, name, user] = p;
-        if (!name || !user) return reply('Name and username required.');
-        kosData.players.push({ name, username:user, by:msg.author.id });
+        const [_, name, username] = args;
+        if (!name || !username) return respond('Name and username required.');
+
+        if (data.players.some(p=>norm(p.name)===norm(name) && p.username===username))
+            return respond('That player already exists.');
+
+        data.players.push({ name, username });
         save();
-        if (kosData.list.channelId) {
-            const ch = await client.channels.fetch(kosData.list.channelId);
+
+        if (data.list.channelId) {
+            const ch = await client.channels.fetch(data.list.channelId);
             await updateList(ch);
         }
-        return reply(`Added ${name}`);
+        return respond(`Added ${name}`);
     }
 
     if (cmd === '^kr') {
-        const name = p[1];
-        if (!name) return reply('Name required.');
-        kosData.players = kosData.players.filter(p=>norm(p.name)!==norm(name));
-        kosData.priority = kosData.priority.filter(n=>n!==norm(name));
+        const name = args[1];
+        if (!name) return respond('Name required.');
+
+        data.players = data.players.filter(p=>norm(p.name)!==norm(name));
+        data.priority = data.priority.filter(n=>n!==norm(name));
         save();
-        const ch = await client.channels.fetch(kosData.list.channelId);
+
+        const ch = await client.channels.fetch(data.list.channelId);
         await updateList(ch);
-        return reply(`Removed ${name}`);
+        return respond(`Removed ${name}`);
     }
 });
 
@@ -196,11 +195,14 @@ client.on('interactionCreate', async i => {
     }
 
     if (i.commandName === 'submission') {
-        kosData.list.channelId = i.channelId;
+        data.list.channelId = i.channelId;
         save();
-        return i.editReply(`Submission channel set.`);
+        return i.editReply('Submission channel set.');
     }
 });
 
-client.once('ready',()=>console.log(`Logged in as ${client.user.tag}`));
+client.once('ready', () =>
+    console.log(`Logged in as ${client.user.tag}`)
+);
+
 client.login(process.env.TOKEN);
