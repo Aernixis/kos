@@ -19,11 +19,12 @@ const DATA_FILE = './data.json';
 
 /* ===================== DATA ===================== */
 let data = {
-  players: [],        // array of { name, username, addedBy }
-  topPriority: [],    // array of usernames
-  clans: [],          // array of strings REGION»NAME
+  players: [], // {name, username, addedBy}
+  topPriority: [], // usernames
+  clans: [], // "REGION»NAME"
   submissionChannelId: null,
-  listData: {         // section message IDs
+  listData: {
+    channelId: null,
     playersMessageId: null,
     priorityMessageId: null,
     clansMessageId: null
@@ -39,11 +40,9 @@ let data = {
 function saveData() {
   fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
 }
-
 function loadData() {
   if (!fs.existsSync(DATA_FILE)) return;
-  const raw = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-  data = { ...data, ...raw };
+  data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
 }
 loadData();
 
@@ -52,58 +51,68 @@ function canUsePriority(msg) {
   if (msg.author.id === OWNER_ID) return true;
   return msg.member?.roles.cache.has(PRIORITY_ROLE_ID);
 }
-
 function rev() {
   data.revision++;
   return '\u200B'.repeat((data.revision % 10) + 1);
 }
 
-async function deleteTogether(userMsg, botMsg, delay = 3000) {
-  setTimeout(() => {
-    userMsg?.delete().catch(() => {});
-    botMsg?.delete().catch(() => {});
-  }, delay);
-}
-
 /* ===================== FORMATTERS ===================== */
 function formatPlayers() {
-  return data.players
+  const rows = data.players
     .filter(p => !data.topPriority.includes(p.username))
     .sort((a, b) => a.name.localeCompare(b.name))
-    .map(p => `${p.name} : ${p.username || 'N/A'}`)
-    .join('\n') || 'None';
+    .map(p => `${p.name} : ${p.username}`);
+  return rows.length ? rows.join('\n') : 'None';
 }
 
 function formatPriority() {
-  return data.topPriority
-    .map(u => {
-      const p = data.players.find(p => p.username === u);
-      return p ? `${p.name} : ${p.username}` : null; // leave blank if missing
-    })
+  const rows = data.topPriority
+    .map(u => data.players.find(p => p.username === u))
     .filter(Boolean)
-    .join('\n') || 'None';
+    .map(p => `${p.name} : ${p.username}`);
+  return rows.length ? rows.join('\n') : 'None';
 }
 
 function formatClans() {
-  return data.clans.length ? [...data.clans].sort().join('\n') : 'None';
+  return data.clans.length ? data.clans.sort().join('\n') : 'None';
 }
 
-/* ===================== SECTION-UPDATER ===================== */
-const sectionMap = {
-  players: ['–––––– PLAYERS ––––––', formatPlayers(), 'playersMessageId'],
-  topPriority: ['–––––– PRIORITY ––––––', formatPriority(), 'priorityMessageId'],
-  clans: ['–––––– CLANS ––––––', formatClans(), 'clansMessageId']
-};
-
-async function updateSection(channel, key) {
+/* ===================== LIST UPDATER ===================== */
+async function updateSection(channel, section) {
   if (!channel) return;
+  let content = '';
+  let messageId = null;
 
-  const [title, content, msgKey] = sectionMap[key];
-  const msgId = data.listData[msgKey];
-  if (!msgId) return; // prefix commands never create new messages
+  switch (section) {
+    case 'players':
+      content = `\`\`\`–––––– PLAYERS ––––––\n${formatPlayers()}\n\`\`\`${rev()}`;
+      messageId = data.listData.playersMessageId;
+      break;
+    case 'topPriority':
+      content = `\`\`\`–––––– PRIORITY ––––––\n${formatPriority()}\n\`\`\`${rev()}`;
+      messageId = data.listData.priorityMessageId;
+      break;
+    case 'clans':
+      content = `\`\`\`–––––– CLANS ––––––\n${formatClans()}\n\`\`\`${rev()}`;
+      messageId = data.listData.clansMessageId;
+      break;
+    default:
+      return;
+  }
 
-  const msg = await channel.messages.fetch(msgId).catch(() => null);
-  if (msg) await msg.edit(`\`\`\`${title}\n${content}\n\`\`\`${rev()}`);
+  let msg = null;
+  if (messageId) msg = await channel.messages.fetch(messageId).catch(() => null);
+
+  if (msg) {
+    await msg.edit(content);
+  } else {
+    msg = await channel.send(content);
+    if (section === 'players') data.listData.playersMessageId = msg.id;
+    if (section === 'topPriority') data.listData.priorityMessageId = msg.id;
+    if (section === 'clans') data.listData.clansMessageId = msg.id;
+  }
+
+  saveData();
 }
 
 /* ===================== PANEL ===================== */
@@ -117,17 +126,16 @@ async function updatePanel(channel) {
   const info = new EmbedBuilder()
     .setTitle('KOS Submission System')
     .setColor(0xFF0000)
-    .setDescription(
-      `Players ^ka name username ^kr name username\nClans ^kca name region ^kcr name region\nPriority ^p add username ^p remove username`
-    );
+    .setDescription(`Players ^ka name username ^kr name username
+Clans ^kca name region ^kcr name region
+Priority ^p add username ^p remove username`);
 
   async function upsert(id, embed) {
     if (id) {
       const msg = await channel.messages.fetch(id).catch(() => null);
       if (msg) return (await msg.edit({ embeds: [embed] })).id;
     }
-    const msg = await channel.send({ embeds: [embed] });
-    return msg.id;
+    return (await channel.send({ embeds: [embed] })).id;
   }
 
   data.panelMessages.gif = await upsert(data.panelMessages.gif, gif);
@@ -145,56 +153,72 @@ client.on('messageCreate', async msg => {
   const args = msg.content.trim().split(/\s+/);
   const cmd = args.shift().toLowerCase();
 
-  /* SUBMISSION */
+  const deleteMsg = (m) => setTimeout(() => m?.delete().catch(() => {}), 3000);
+  deleteMsg(msg);
+
   if (cmd === '^submission') {
     data.submissionChannelId = msg.channel.id;
     saveData();
     const m = await msg.channel.send(`KOS commands locked to <#${msg.channel.id}>`);
-    return deleteTogether(msg, m, 4000);
+    return deleteMsg(m);
   }
 
   if (data.submissionChannelId && msg.channel.id !== data.submissionChannelId) {
     const m = await msg.channel.send(`Use KOS messages in <#${data.submissionChannelId}>.`);
-    return deleteTogether(msg, m, 4000);
+    return deleteMsg(m);
   }
 
   /* ===================== ADD PLAYER ^ka ===================== */
   if (cmd === '^ka') {
-    const [name, username] = args;
-    if (!username) return;
-
-    const exists = data.players.some(p => p.username === username);
-    if (exists) {
-      const m = await msg.channel.send(`<@${msg.author.id}> Player already in KOS.`);
-      return deleteTogether(msg, m);
+    if (args.length < 2) {
+      const m = await msg.channel.send(`<@${msg.author.id}> Usage: ^ka <name> <username>`);
+      return deleteMsg(m);
     }
 
-    data.players.push({ name, username, addedBy: msg.author.id });
-    saveData();
+    const replies = [];
+    for (let i = 0; i < args.length; i += 2) {
+      const name = args[i];
+      const username = args[i + 1];
+      if (!name || !username) continue;
 
+      const exists = data.players.some(p => p.username === username);
+      if (exists) {
+        replies.push(`Player already in KOS: ${username}`);
+        continue;
+      }
+
+      data.players.push({ name, username, addedBy: msg.author.id });
+      replies.push(`Added ${username}`);
+    }
+
+    saveData();
     if (data.listData.playersMessageId) await updateSection(msg.channel, 'players');
 
-    const m = await msg.channel.send(`<@${msg.author.id}> Added ${username}`);
-    return deleteTogether(msg, m);
+    if (replies.length) {
+      const m = await msg.channel.send(`<@${msg.author.id}> ${replies.join('\n')}`);
+      deleteMsg(m);
+    }
+    return;
   }
 
   /* ===================== REMOVE PLAYER ^kr ===================== */
   if (cmd === '^kr') {
-    const [nameOrUsername, maybeUsername] = args;
-    let removed = false;
-    let removedName = maybeUsername || nameOrUsername;
+    if (args.length < 1) return;
 
-    if (maybeUsername) {
-      const index = data.players.findIndex(p => p.username === maybeUsername);
-      if (index !== -1) {
-        const removedPlayer = data.players.splice(index, 1)[0];
-        data.topPriority = data.topPriority.filter(u => u !== removedPlayer.username);
-        removed = true;
-      }
+    const usernameOrName = args[1] || args[0]; // prefer username if provided
+    let removed = false;
+    let removedName = usernameOrName;
+
+    const index = data.players.findIndex(p => p.username === usernameOrName);
+    if (index !== -1) {
+      const removedPlayer = data.players.splice(index, 1)[0];
+      data.topPriority = data.topPriority.filter(u => u !== removedPlayer.username);
+      removed = true;
+      removedName = removedPlayer.username;
     } else {
-      const index = data.players.findIndex(p => p.name === nameOrUsername);
-      if (index !== -1) {
-        const removedPlayer = data.players.splice(index, 1)[0];
+      const index2 = data.players.findIndex(p => p.name === usernameOrName);
+      if (index2 !== -1) {
+        const removedPlayer = data.players.splice(index2, 1)[0];
         data.topPriority = data.topPriority.filter(u => u !== removedPlayer.username);
         removed = true;
         removedName = removedPlayer.username || removedPlayer.name;
@@ -207,27 +231,46 @@ client.on('messageCreate', async msg => {
     if (data.listData.playersMessageId) await updateSection(msg.channel, 'players');
 
     const m = await msg.channel.send(`<@${msg.author.id}> Removed ${removedName}`);
-    return deleteTogether(msg, m);
+    return deleteMsg(m);
   }
 
-  /* ===================== ADD CLAN ^kca ===================== */
-  if (cmd === '^kca') {
+  /* ===================== PRIORITY ^p ===================== */
+  if (cmd === '^p' && canUsePriority(msg)) {
+    const replies = [];
+    if (args[0] === 'add' && args[1]) {
+      if (!data.topPriority.includes(args[1])) data.topPriority.push(args[1]);
+      replies.push(`Added ${args[1]} to priority`);
+    }
+
+    if (args[0] === 'remove' && args[1]) {
+      data.topPriority = data.topPriority.filter(u => u !== args[1]);
+      replies.push(`Removed ${args[1]} from priority`);
+    }
+
+    if (!replies.length) return;
+
+    saveData();
+    if (data.listData.priorityMessageId) await updateSection(msg.channel, 'topPriority');
+
+    const m = await msg.channel.send(`<@${msg.author.id}> ${replies.join('\n')}`);
+    return deleteMsg(m);
+  }
+
+  /* ===================== CLANS ^kca / ^kcr ===================== */
+  if (cmd === '^kca' && args.length >= 2) {
     const [name, region] = args;
-    if (!name || !region) return;
     const clan = `${region.toUpperCase()}»${name.toUpperCase()}`;
     if (!data.clans.includes(clan)) {
       data.clans.push(clan);
       saveData();
       if (data.listData.clansMessageId) await updateSection(msg.channel, 'clans');
       const m = await msg.channel.send(`<@${msg.author.id}> Added clan ${clan}`);
-      return deleteTogether(msg, m);
+      return deleteMsg(m);
     }
   }
 
-  /* ===================== REMOVE CLAN ^kcr ===================== */
-  if (cmd === '^kcr') {
+  if (cmd === '^kcr' && args.length >= 2) {
     const [name, region] = args;
-    if (!name || !region) return;
     const clan = `${region.toUpperCase()}»${name.toUpperCase()}`;
     const index = data.clans.indexOf(clan);
     if (index !== -1) {
@@ -235,26 +278,7 @@ client.on('messageCreate', async msg => {
       saveData();
       if (data.listData.clansMessageId) await updateSection(msg.channel, 'clans');
       const m = await msg.channel.send(`<@${msg.author.id}> Removed clan ${clan}`);
-      return deleteTogether(msg, m);
-    }
-  }
-
-  /* ===================== PRIORITY ^p ===================== */
-  if (cmd === '^p' && canUsePriority(msg)) {
-    if (args[0] === 'add' && args[1]) {
-      if (!data.topPriority.includes(args[1])) data.topPriority.push(args[1]);
-      saveData();
-      if (data.listData.priorityMessageId) await updateSection(msg.channel, 'topPriority');
-      const m = await msg.channel.send(`<@${msg.author.id}> Added ${args[1]} to priority`);
-      return deleteTogether(msg, m);
-    }
-
-    if (args[0] === 'remove' && args[1]) {
-      data.topPriority = data.topPriority.filter(u => u !== args[1]);
-      saveData();
-      if (data.listData.priorityMessageId) await updateSection(msg.channel, 'topPriority');
-      const m = await msg.channel.send(`<@${msg.author.id}> Removed ${args[1]} from priority`);
-      return deleteTogether(msg, m);
+      return deleteMsg(m);
     }
   }
 });
@@ -263,34 +287,19 @@ client.on('messageCreate', async msg => {
 client.on('interactionCreate', async i => {
   if (!i.isChatInputCommand()) return;
 
-  if (i.user.id !== OWNER_ID) {
-    return i.reply({ content: 'Only the bot owner can use this command.', ephemeral: true }).catch(() => {});
-  }
-
   if (i.commandName === 'panel') {
+    if (i.user.id !== OWNER_ID) return i.reply({ content: 'Unauthorized.', ephemeral: true });
     await i.reply({ content: 'Panel updated.', ephemeral: true });
     await updatePanel(i.channel);
   }
 
   if (i.commandName === 'list') {
-    await i.reply({ content: 'KOS list created.', ephemeral: true });
-
-    const sections = ['players', 'topPriority', 'clans'];
-    for (const key of sections) {
-      const msgKey = sectionMap[key][2];
-      if (!data.listData[msgKey]) {
-        const map = {
-          players: formatPlayers(),
-          topPriority: formatPriority(),
-          clans: formatClans()
-        };
-        const title = key === 'topPriority' ? '–––––– PRIORITY ––––––' : `–––––– ${key.toUpperCase()} ––––––`;
-        const text = `\`\`\`${title}\n${map[key]}\n\`\`\`${rev()}`;
-        const msg = await i.channel.send(text);
-        data.listData[msgKey] = msg.id;
-      }
-    }
-    saveData();
+    if (i.user.id !== OWNER_ID) return i.reply({ content: 'Unauthorized.', ephemeral: true });
+    await i.reply({ content: 'KOS list updated.', ephemeral: true });
+    // Only creates list messages if not present
+    await updateSection(i.channel, 'players');
+    await updateSection(i.channel, 'topPriority');
+    await updateSection(i.channel, 'clans');
   }
 });
 
