@@ -72,11 +72,10 @@ function formatPlayers() {
 }
 
 function formatPriority() {
-  const rows = [...data.priority]
-    .map(u => {
-      const p = data.players.get(u);
-      return p ? `${p.name} : ${p.username}` : u; // fallback
-    });
+  const rows = [...data.priority].map(u => {
+    const p = data.players.get(u);
+    return p ? `${p.name} : ${p.username}` : `${u} : N/A`;
+  });
   return rows.length ? rows.join('\n') : 'None';
 }
 
@@ -276,7 +275,6 @@ client.on('messageCreate', async msg => {
     if (player === 'AMBIGUOUS') return msg.channel.send(`<@${msg.author.id}> Multiple players share that name. Please provide a username.`).then(m=>setTimeout(()=>m.delete().catch(()=>{}),3000));
 
     if (cmd === '^p') {
-      if (!data.players.has(player.username)) return msg.channel.send(`<@${msg.author.id}> Player not in KOS list.`).then(m=>setTimeout(()=>m.delete().catch(()=>{}),3000));
       data.priority.add(player.username);
       reply = `Promoted ${player.username} to priority`;
     } else if (cmd === '^pr') {
