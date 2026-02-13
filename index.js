@@ -31,28 +31,21 @@ function loadData() {
   if (!fs.existsSync(DATA_FILE)) return;
   try {
     const oldData = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-
     if (Array.isArray(oldData.players))
       data.players = oldData.players.map(p => ({
         name: String(p.name || '').trim(),
         username: p.username ? String(p.username).trim() : null,
         addedBy: p.addedBy || null
       }));
-
     if (Array.isArray(oldData.topPriority) && oldData.topPriority.length)
       data.priority = [...new Set(oldData.topPriority.map(p => String(p).trim()))];
     else if (Array.isArray(oldData.priority))
       data.priority = [...new Set(oldData.priority.map(p => String(p).trim()))];
-
     if (Array.isArray(oldData.clans))
       data.clans = [...new Set(oldData.clans.map(c => typeof c === 'string' ? c.trim().toUpperCase() : null).filter(Boolean))];
-
     if (oldData.panelMessages) data.panelMessages = oldData.panelMessages;
     if (oldData.listData) data.listData = oldData.listData;
-
-  } catch (err) {
-    console.error('Failed to load data.json', err);
-  }
+  } catch (err) { console.error('Failed to load data.json', err); }
 }
 
 function saveData() {
@@ -63,10 +56,17 @@ loadData();
 
 // ---------------- HELPERS ----------------
 const norm = s => String(s).toLowerCase();
-
 function canUsePriority(msg) {
   if (msg.author.id === OWNER_ID) return true;
   return msg.member?.roles.cache.has(PRIORITY_ROLE_ID);
+}
+
+// ---------------- DEDUPLICATED MESSAGE SENDER ----------------
+async function sendOnce(channel, content, options = {}) {
+  const messages = await channel.messages.fetch({ limit: 10 });
+  const duplicate = messages.find(m => m.author.id === channel.client.user.id && m.content === content);
+  if (duplicate) return duplicate;
+  return await channel.send({ content, ...options });
 }
 
 // ---------------- FORMATTING ----------------
@@ -102,9 +102,10 @@ async function updateKosList(channel) {
   ];
 
   for (const section of sections) {
-    if (!section.key || !data.listData[section.key]) continue; // only edit existing messages
+    const msgId = data.listData[section.key];
+    if (!msgId) continue; // never send new message
     try {
-      const msg = await channel.messages.fetch(data.listData[section.key]).catch(() => null);
+      const msg = await channel.messages.fetch(msgId).catch(() => null);
       if (!msg) continue;
       const formatted = '```' + section.title + '\n' + section.content + '\n```';
       if (msg.content !== formatted) await msg.edit({ content: formatted });
@@ -166,10 +167,10 @@ client.on('messageCreate', async msg => {
   msg._kosProcessed = true;
 
   const argsRaw = msg.content.trim().split(/\s+/);
-  let cmd = argsRaw.shift().toLowerCase();
+  let cmd = argsRaw.shift()?.toLowerCase();
   let args = [...argsRaw];
 
-  // Aliases for ^kos and ^priority
+  // Aliases
   if (cmd === '^kos') {
     const sub = args.shift()?.toLowerCase();
     if (sub === 'add') cmd = '^ka';
@@ -190,11 +191,8 @@ client.on('messageCreate', async msg => {
   // Submission channel check
   if (data.listData.channelId && msg.channel.id !== data.listData.channelId) {
     if (['^ka','^kr','^p','^pa','^pr','^kca','^kcr'].includes(cmd)) {
-      const botMsg = await msg.channel.send(`<@${msg.author.id}> Use KOS commands in <#${data.listData.channelId}>.`);
-      setTimeout(()=>{
-        botMsg.delete().catch(()=>{});
-        msg.delete().catch(()=>{});
-      }, 3000);
+      await sendOnce(msg.channel, `<@${msg.author.id}> Use KOS commands in <#${data.listData.channelId}>.`);
+      setTimeout(()=>{ msg.delete().catch(()=>{}); },3000);
       return;
     }
   }
@@ -206,8 +204,7 @@ client.on('messageCreate', async msg => {
   if (cmd === '^ka') {
     const name = args.shift();
     const username = args.shift();
-    if (!name || !username) return;
-    if (!data.players.some(p => norm(p.name) === norm(name) && p.username === username)) {
+    if (name && username && !data.players.some(p => norm(p.name) === norm(name) && p.username === username)) {
       data.players.push({ name, username, addedBy: msg.author.id });
       changed = true;
       actionText = `Added ${name} : ${username}`;
@@ -216,76 +213,64 @@ client.on('messageCreate', async msg => {
   if (cmd === '^kr') {
     const name = args.shift();
     const username = args.shift() || null;
-    if (!name) return;
-    const before = data.players.length;
-    data.players = data.players.filter(p => !(norm(p.name) === norm(name) && (username ? p.username === username : true)));
-    data.priority = data.priority.filter(p => norm(p) !== norm(name));
-    if (before !== data.players.length) { changed = true; actionText = `Removed ${name}${username?` : ${username}`:''}`; }
+    if (name) {
+      const before = data.players.length;
+      data.players = data.players.filter(p => !(norm(p.name) === norm(name) && (username ? p.username === username : true)));
+      data.priority = data.priority.filter(p => norm(p) !== norm(name));
+      if (before !== data.players.length) { changed = true; actionText = `Removed ${name}${username?` : ${username}`:''}`; }
+    }
   }
 
   // ---- CLAN ----
   if (cmd === '^kca') {
     const name = args.shift();
     const region = args.shift();
-    if (!name || !region) return;
-    const clan = `${region.toUpperCase()}»${name.toUpperCase()}`;
-    if (!data.clans.includes(clan)) { data.clans.push(clan); changed = true; actionText = `Added clan ${clan}`; }
+    if (name && region) {
+      const clan = `${region.toUpperCase()}»${name.toUpperCase()}`;
+      if (!data.clans.includes(clan)) { data.clans.push(clan); changed = true; actionText = `Added clan ${clan}`; }
+    }
   }
   if (cmd === '^kcr') {
     const name = args.shift();
     const region = args.shift();
-    if (!name || !region) return;
-    const clan = `${region.toUpperCase()}»${name.toUpperCase()}`;
-    const before = data.clans.length;
-    data.clans = data.clans.filter(c => c !== clan);
-    if (before !== data.clans.length) { changed = true; actionText = `Removed clan ${clan}`; }
+    if (name && region) {
+      const clan = `${region.toUpperCase()}»${name.toUpperCase()}`;
+      const before = data.clans.length;
+      data.clans = data.clans.filter(c => c !== clan);
+      if (before !== data.clans.length) { changed = true; actionText = `Removed clan ${clan}`; }
+    }
   }
 
   // ---- PRIORITY ----
   if (['^p','^pa'].includes(cmd)) {
     const name = args.join(' ');
-    if (!name) return;
-    if (!canUsePriority(msg)) {
-      const botMsg = await msg.channel.send(`<@${msg.author.id}> You don't have permission to use this command.`);
-      setTimeout(()=>{ botMsg.delete().catch(()=>{}); msg.delete().catch(()=>{}); },3000);
-      return;
+    if (name && canUsePriority(msg) && !data.priority.includes(name)) {
+      data.priority.push(name); changed = true; actionText = `Added ${name} to priority`;
     }
-    if (!data.priority.includes(name)) { data.priority.push(name); changed = true; actionText = `Added ${name} to priority`; }
   }
   if (cmd === '^pr') {
     const name = args.join(' ');
-    if (!name) return;
-    if (!canUsePriority(msg)) {
-      const botMsg = await msg.channel.send(`<@${msg.author.id}> You don't have permission to use this command.`);
-      setTimeout(()=>{ botMsg.delete().catch(()=>{}); msg.delete().catch(()=>{}); },3000);
-      return;
+    if (name && canUsePriority(msg)) {
+      const before = data.priority.length;
+      data.priority = data.priority.filter(p => p !== name);
+      if (before !== data.priority.length){ changed = true; actionText = `Removed ${name} from priority`; }
     }
-    const before = data.priority.length;
-    data.priority = data.priority.filter(p => p !== name);
-    if (before !== data.priority.length){ changed = true; actionText = `Removed ${name} from priority`; }
   }
 
   if (!changed) return;
 
   saveData();
-
-  // Edit KOS list messages without sending new ones
   if (data.listData.channelId) {
     const listChannel = msg.guild.channels.cache.get(data.listData.channelId);
     if (listChannel) updateKosList(listChannel).catch(console.error);
   }
 
-  // Send single confirmation
-  if (actionText){
-    const botMsg = await msg.channel.send(`<@${msg.author.id}> ${actionText}`);
-    setTimeout(()=>{ botMsg.delete().catch(()=>{}); msg.delete().catch(()=>{}); },3000);
-  }
+  if (actionText) await sendOnce(msg.channel, `<@${msg.author.id}> ${actionText}`);
 });
 
 // ---------------- SLASH COMMANDS ----------------
 client.on('interactionCreate', async i => {
   if (!i.isChatInputCommand()) return;
-
   try {
     if (i.commandName === 'list') {
       await i.deferReply({ ephemeral: true });
@@ -307,9 +292,7 @@ client.on('interactionCreate', async i => {
     }
   } catch (e) {
     console.error('Slash command error:', e);
-    if (!i.replied && !i.deferred) {
-      await i.reply({ content: 'Error occurred.', ephemeral: true }).catch(() => {});
-    }
+    if (!i.replied && !i.deferred) await i.reply({ content: 'Error occurred.', ephemeral: true }).catch(()=>{});
   }
 });
 
