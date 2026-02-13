@@ -72,10 +72,13 @@ function formatPlayers() {
 }
 
 function formatPriority() {
-  const rows = [...data.priority].map(u => {
-    const p = data.players.get(u);
-    return p ? `${p.name} : ${p.username}` : `${u} : N/A`;
-  });
+  const rows = [...data.priority]
+    .map(u => {
+      const p = data.players.get(u);
+      if (p) return `${p.name} : ${p.username}`;
+      return null;
+    })
+    .filter(Boolean);
   return rows.length ? rows.join('\n') : 'None';
 }
 
@@ -172,11 +175,6 @@ client.on('messageCreate', async msg => {
   let reply = '';
 
   // ---------- Helpers ----------
-  function checkMissing(params, values) {
-    const missing = [];
-    params.forEach((p,i) => { if (!values[i]) missing.push(p); });
-    return missing;
-  }
   function findPlayer(identifier) {
     if (data.players.has(identifier)) return data.players.get(identifier);
     const matches = [...data.players.values()].filter(p => p.name.toLowerCase() === identifier.toLowerCase());
@@ -188,8 +186,7 @@ client.on('messageCreate', async msg => {
   // ---------- ^ka ----------
   if (cmd === '^ka') {
     const [name, username] = args;
-    const missing = checkMissing(['name','username'], [name, username]);
-    if (missing.length) return msg.channel.send(`<@${msg.author.id}> Missing ${missing.join(' and ')}`).then(m=>setTimeout(()=>m.delete().catch(()=>{}),3000));
+    if (!name || !username) return msg.channel.send(`<@${msg.author.id}> Player not found`).then(m=>setTimeout(()=>m.delete().catch(()=>{}),3000));
     if (data.players.has(username)) return msg.channel.send(`<@${msg.author.id}> Player already in KOS: ${username}`).then(m=>setTimeout(()=>m.delete().catch(()=>{}),3000));
 
     data.players.set(username, { name, username, addedBy: msg.author.id });
@@ -201,10 +198,10 @@ client.on('messageCreate', async msg => {
   // ---------- ^kr ----------
   if (cmd === '^kr') {
     const [identifier] = args;
-    if (!identifier) return msg.channel.send(`<@${msg.author.id}> Missing name or username`).then(m=>setTimeout(()=>m.delete().catch(()=>{}),3000));
+    if (!identifier) return msg.channel.send(`<@${msg.author.id}> Player not found`).then(m=>setTimeout(()=>m.delete().catch(()=>{}),3000));
 
     const player = findPlayer(identifier);
-    if (!player) return msg.channel.send(`<@${msg.author.id}> Player not found: ${identifier}`).then(m=>setTimeout(()=>m.delete().catch(()=>{}),3000));
+    if (!player) return msg.channel.send(`<@${msg.author.id}> Player not found`).then(m=>setTimeout(()=>m.delete().catch(()=>{}),3000));
     if (player === 'AMBIGUOUS') return msg.channel.send(`<@${msg.author.id}> Multiple players share that name. Please provide a username.`).then(m=>setTimeout(()=>m.delete().catch(()=>{}),3000));
 
     if (player.addedBy !== msg.author.id && msg.author.id !== OWNER_ID && !canUsePriority(msg)) {
@@ -222,8 +219,7 @@ client.on('messageCreate', async msg => {
   // ---------- ^kca ----------
   if (cmd === '^kca') {
     const [name, region] = args;
-    const missing = checkMissing(['name','region'], [name, region]);
-    if (missing.length) return msg.channel.send(`<@${msg.author.id}> Missing ${missing.join(' and ')}`).then(m=>setTimeout(()=>m.delete().catch(()=>{}),3000));
+    if (!name || !region) return msg.channel.send(`<@${msg.author.id}> Player not found`).then(m=>setTimeout(()=>m.delete().catch(()=>{}),3000));
 
     const clan = `${region.toUpperCase()}»${name.toUpperCase()}`;
     if (!data.clans.has(clan)) {
@@ -237,8 +233,7 @@ client.on('messageCreate', async msg => {
   // ---------- ^kcr ----------
   if (cmd === '^kcr') {
     const [name, region] = args;
-    const missing = checkMissing(['name','region'], [name, region]);
-    if (missing.length) return msg.channel.send(`<@${msg.author.id}> Missing ${missing.join(' and ')}`).then(m=>setTimeout(()=>m.delete().catch(()=>{}),3000));
+    if (!name || !region) return msg.channel.send(`<@${msg.author.id}> Player not found`).then(m=>setTimeout(()=>m.delete().catch(()=>{}),3000));
 
     const clan = `${region.toUpperCase()}»${name.toUpperCase()}`;
     if (data.clans.delete(clan)) {
@@ -254,8 +249,7 @@ client.on('messageCreate', async msg => {
 
     if (cmd === '^pa') {
       const [name, username] = args;
-      const missing = checkMissing(['name','username'], [name, username]);
-      if (missing.length) return msg.channel.send(`<@${msg.author.id}> Missing ${missing.join(' and ')}`).then(m=>setTimeout(()=>m.delete().catch(()=>{}),3000));
+      if (!name || !username) return msg.channel.send(`<@${msg.author.id}> Player not found`).then(m=>setTimeout(()=>m.delete().catch(()=>{}),3000));
       if (data.players.has(username)) return msg.channel.send(`<@${msg.author.id}> Player already exists: ${username}`).then(m=>setTimeout(()=>m.delete().catch(()=>{}),3000));
 
       data.players.set(username, { name, username, addedBy: msg.author.id });
@@ -268,10 +262,10 @@ client.on('messageCreate', async msg => {
     }
 
     const [identifier] = args;
-    if (!identifier) return msg.channel.send(`<@${msg.author.id}> Missing name or username.`).then(m=>setTimeout(()=>m.delete().catch(()=>{}),3000));
+    if (!identifier) return msg.channel.send(`<@${msg.author.id}> Player not found`).then(m=>setTimeout(()=>m.delete().catch(()=>{}),3000));
 
     const player = findPlayer(identifier);
-    if (!player) return msg.channel.send(`<@${msg.author.id}> Player not found: ${identifier}`).then(m=>setTimeout(()=>m.delete().catch(()=>{}),3000));
+    if (!player) return msg.channel.send(`<@${msg.author.id}> Player not found`).then(m=>setTimeout(()=>m.delete().catch(()=>{}),3000));
     if (player === 'AMBIGUOUS') return msg.channel.send(`<@${msg.author.id}> Multiple players share that name. Please provide a username.`).then(m=>setTimeout(()=>m.delete().catch(()=>{}),3000));
 
     if (cmd === '^p') {
