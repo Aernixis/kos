@@ -153,16 +153,30 @@ async function updatePanel(channel) {
 This bot organizes LBG players and clans onto the KOS list for YX members.
 
 Players
-^ka name username → Add player
-^kr name [username] → Remove player
-
-Priority
-^p name → Add to priority
-^pr name → Remove from priority
+To add players, use the command ^kos add or ^ka
+When adding players, place the name before the username
+Example:
+^kos add poison poisonrebuild
+^ka poison poisonrebuild
+To remove players, use the command ^kos remove or ^kr
+Removing players follows the same format as adding them
+Example:
+^kos remove poison poisonrebuild
+^kr poison poisonrebuild
 
 Clans
-^kca clan → Add clan
-^kcr clan → Remove clan
+To add clans, use the command ^kos clan add or ^kca
+When adding clans, place the name before the region and use the short region code
+Example:
+^kos clan add yx eu
+^kca yx eu
+To remove clans, use the command ^kos clan remove or ^kcr
+Removing clans follows the same format as adding them
+Example:
+^kos clan remove yx eu
+^kcr yx eu
+
+Thank you for being apart of YX!
   `;
 
   const infoEmbed = new EmbedBuilder()
@@ -265,7 +279,7 @@ client.on('messageCreate', async msg => {
 
   saveData();
 
-  // Send confirmation immediately (without awaiting KOS update)
+  // Send confirmation immediately and delete with command
   if (actionText) {
     try {
       const botMsg = await msg.channel.send(`<@${msg.author.id}> ${actionText}`);
@@ -273,7 +287,7 @@ client.on('messageCreate', async msg => {
     } catch {}
   }
 
-  // Update the KOS list in the background
+  // Update KOS list in background
   updateKosList(msg.channel).catch(console.error);
 });
 
@@ -288,7 +302,6 @@ client.on('interactionCreate', async i => {
       data.listData.channelId = i.channelId;
       saveData();
     }
-    // ❌ No ephemeral messages
   } catch (e) {
     console.error('Slash command error:', e);
   }
