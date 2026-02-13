@@ -312,23 +312,8 @@ client.on('interactionCreate', async i => {
       await updateKosList(i.channel);
       await i.reply({ content: 'KOS list updated.', ephemeral: true });
     }
-
-    if (i.commandName === 'submission') {
-      data.listData.channelId = i.channelId;
-      saveData();
-      if (!i.replied && !i.deferred) {
-        await i.reply({ content: `Submission channel set to <#${i.channelId}>`, ephemeral: true });
-      }
-    }
-  } catch (e) {
-    console.error('Slash command error:', e);
-    if (!i.replied && !i.deferred) {
-      await i.reply({ content: 'Error occurred.', ephemeral: true }).catch(() => {});
-    }
-  }
+  } catch(e) { console.error('Slash command error', e); }
 });
-
-
 
 // ---------------- LOGIN ----------------
 client.login(process.env.TOKEN);
