@@ -14,6 +14,7 @@ const client = new Client({
 const OWNER_ID = '1283217337084018749';
 const DATA_FILE = './data.json';
 
+/* ===================== LOAD DATA WITH SAFE DEFAULTS ===================== */
 let data = {
     players: [],
     priority: [],
@@ -23,14 +24,22 @@ let data = {
 };
 
 if (fs.existsSync(DATA_FILE)) {
-    data = JSON.parse(fs.readFileSync(DATA_FILE));
+    try {
+        const loaded = JSON.parse(fs.readFileSync(DATA_FILE));
+        data.players = loaded.players || [];
+        data.priority = loaded.priority || [];
+        data.clans = loaded.clans || [];
+        data.panel = loaded.panel || { gif: null, tutorial: null };
+        data.list = loaded.list || { channelId: null, players: null, priority: null, clans: null };
+    } catch(e) {
+        console.error('Failed to load data.json, using defaults', e);
+    }
 }
 
 const save = () => fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
 const norm = s => s.toLowerCase();
 
 /* ===================== FORMAT ===================== */
-
 const fmt = p => p.username ? `${p.name} : ${p.username}` : p.name;
 
 const playersText = () =>
@@ -47,10 +56,9 @@ const priorityText = () =>
         .sort().join('\n') || 'None';
 
 const clansText = () =>
-    data.clans.map(c=>`${c.clan} ${c.region}`).sort().join('\n') || 'None';
+    data.clans.map(c=>`${c.clan} ${c.region || ''}`.trim()).sort().join('\n') || 'None';
 
-/* ===================== MESSAGE CONTROL (FAST) ===================== */
-
+/* ===================== MESSAGE CONTROL ===================== */
 async function editOrCreate(channel, id, payload) {
     if (id) {
         const msg = await channel.messages.fetch(id).catch(()=>null);
@@ -64,6 +72,8 @@ async function editOrCreate(channel, id, payload) {
 }
 
 async function updateList(channel) {
+    if (!channel) return;
+
     data.list.channelId = channel.id;
 
     data.list.players = await editOrCreate(
@@ -88,8 +98,9 @@ async function updateList(channel) {
 }
 
 /* ===================== PANEL ===================== */
-
 async function updatePanel(channel) {
+    if (!channel) return;
+
     const gif = new EmbedBuilder()
         .setColor(0xFF0000)
         .setImage('https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExc2FoODRjMmVtNmhncjkyZzY0ZGVwa2l3dzV0M3UyYmZ4bjVsZ2pnOCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/iuttaLUMRLWEgJKRHx/giphy.gif');
@@ -134,7 +145,6 @@ Thank you for being apart of YX!
 }
 
 /* ===================== PREFIX COMMANDS ===================== */
-
 client.on('messageCreate', async msg => {
     if (msg.author.bot || !msg.content.startsWith('^')) return;
 
@@ -171,14 +181,15 @@ client.on('messageCreate', async msg => {
         data.priority = data.priority.filter(n=>n!==norm(name));
         save();
 
-        const ch = await client.channels.fetch(data.list.channelId);
-        await updateList(ch);
+        if (data.list.channelId) {
+            const ch = await client.channels.fetch(data.list.channelId);
+            await updateList(ch);
+        }
         return respond(`Removed ${name}`);
     }
 });
 
-/* ===================== SLASH ===================== */
-
+/* ===================== SLASH COMMANDS ===================== */
 client.on('interactionCreate', async i => {
     if (!i.isChatInputCommand() || i.user.id !== OWNER_ID) return;
 
@@ -201,6 +212,7 @@ client.on('interactionCreate', async i => {
     }
 });
 
+/* ===================== READY ===================== */
 client.once('ready', () =>
     console.log(`Logged in as ${client.user.tag}`)
 );
