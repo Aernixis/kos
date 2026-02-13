@@ -66,21 +66,22 @@ function canUsePriority(msg) {
 }
 
 // ---------------- FORMAT ----------------
-function formatPriority() {
-    return kosData.topPriority
-        .map(n => {
-            const p = kosData.players.find(p => norm(p.name) === n);
-            return p ? `${p.name} : ${p.username || 'N/A'}` : n;
-        })
-        .sort()
-        .join('\n') || 'None';
-}
-
 function formatPlayers() {
     return kosData.players
         .filter(p => !kosData.topPriority.includes(norm(p.name)))
         .sort((a,b) => a.name.localeCompare(b.name))
-        .map(p => `${p.name} : ${p.username || 'N/A'}`)
+        .map(p => p.username ? `${p.name} : ${p.username}` : p.name)
+        .join('\n') || 'None';
+}
+
+function formatPriority() {
+    return kosData.topPriority
+        .map(n => {
+            const p = kosData.players.find(p => norm(p.name) === n);
+            if (!p) return n;
+            return p.username ? `${p.name} : ${p.username}` : p.name;
+        })
+        .sort()
         .join('\n') || 'None';
 }
 
@@ -103,14 +104,14 @@ async function updateKosList(channel) {
         kosData.listData.channelId = channel.id;
 
         async function fetchOrSend(id, content) {
-            try {
-                if (id) {
-                    const msg = await channel.messages.fetch(id).catch(()=>null);
-                    if (msg) return (await msg.edit({ content }))?.id;
-                }
-            } catch {}
-            const msg = await channel.send({ content });
-            return msg.id;
+            let msg = null;
+            if (id) msg = await channel.messages.fetch(id).catch(()=>null);
+            if (msg) {
+                await msg.edit({ content }).catch(()=>{});
+                return msg.id;
+            }
+            msg = await channel.send({ content }).catch(()=>null);
+            return msg?.id || null;
         }
 
         kosData.listData.playersMessageId = await fetchOrSend(
@@ -174,18 +175,16 @@ Thank you for being part of YX!
         `);
 
         async function fetchOrSendEmbed(id, embed) {
-            try {
-                if (id) {
-                    const msg = await channel.messages.fetch(id).catch(()=>null);
-                    if (msg) return (await msg.edit({ embeds: [embed] }))?.id;
-                }
-            } catch {}
-            // Only send if message does not exist
-            const msg = await channel.send({ embeds: [embed] });
-            return msg.id;
+            let msg = null;
+            if (id) msg = await channel.messages.fetch(id).catch(()=>null);
+            if (msg) {
+                await msg.edit({ embeds: [embed] }).catch(()=>{});
+                return msg.id;
+            }
+            msg = await channel.send({ embeds: [embed] }).catch(()=>null);
+            return msg?.id || null;
         }
 
-        // always reuse existing messages
         kosData.panelMessages.gif = await fetchOrSendEmbed(kosData.panelMessages.gif, gifEmbed);
         kosData.panelMessages.tutorial = await fetchOrSendEmbed(kosData.panelMessages.tutorial, infoEmbed);
 
@@ -205,7 +204,7 @@ client.on('messageCreate', async msg => {
     const cmd = p[0].toLowerCase();
 
     async function sendReplyOnce(text) {
-        const key = `${msg.author.id}-${msg.channel.id}-${text}`;
+        const key = `${msg.id}`; // unique per user message
         if (recentReplies.has(key)) return;
         recentReplies.add(key);
 
@@ -216,7 +215,7 @@ client.on('messageCreate', async msg => {
                 msg.delete().catch(()=>{});
                 recentReplies.delete(key);
             }, 3000);
-        } catch {}
+        } catch { recentReplies.delete(key); }
     }
 
     async function updateList() {
@@ -238,11 +237,11 @@ client.on('messageCreate', async msg => {
     if (cmd === '^ka') {
         const name = p[1], username = p[2];
         if (!name || !username) return sendReplyOnce('Name and username required.');
-        if (kosData.players.some(x => norm(x.name) === norm(name) && x.username === username)) 
+        if (kosData.players.some(x => norm(x.name) === norm(name) && x.username === username))
             return sendReplyOnce('This player+username already exists.');
         kosData.players.push({ name, username, addedBy: msg.author.id });
         saveData(); await updateList();
-        return sendReplyOnce(`Added ${name} : ${username}`);
+        return sendReplyOnce(`Added ${name}${username ? ` : ${username}` : ''}`);
     }
 
     if (cmd === '^kr') {
@@ -255,7 +254,7 @@ client.on('messageCreate', async msg => {
         kosData.players = kosData.players.filter(x => x !== player);
         kosData.topPriority = kosData.topPriority.filter(x => x !== norm(player.name));
         saveData(); await updateList();
-        return sendReplyOnce(`Removed ${player.name} : ${player.username}`);
+        return sendReplyOnce(`Removed ${player.name}${player.username ? ` : ${player.username}` : ''}`);
     }
 
     // ---------------- PRIORITY COMMANDS ----------------
