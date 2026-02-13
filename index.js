@@ -61,9 +61,9 @@ function canUsePriority(msg) {
   return msg.member?.roles.cache.has(PRIORITY_ROLE_ID);
 }
 
-// ---------------- DEDUPLICATED MESSAGE SENDER ----------------
+// ---------------- DEDUPLICATED MESSAGE SENDER (CHANNEL SPECIFIC) ----------------
 async function sendOnce(channel, content, options = {}) {
-  const messages = await channel.messages.fetch({ limit: 10 });
+  const messages = await channel.messages.fetch({ limit: 10 }); // only this channel
   const duplicate = messages.find(m => m.author.id === channel.client.user.id && m.content === content);
   if (duplicate) return duplicate;
   return await channel.send({ content, ...options });
@@ -104,21 +104,18 @@ async function updateKosList(channel) {
   for (const section of sections) {
     try {
       const formatted = '```' + section.title + '\n' + section.content + '\n```';
-
       let msg = null;
 
-      // If ID exists, try to fetch
+      // fetch existing message by ID in this channel
       if (section.key && data.listData[section.key]) {
         msg = await channel.messages.fetch(data.listData[section.key]).catch(() => null);
       }
 
-      // If message doesn’t exist, create it once
       if (!msg) {
         msg = await channel.send({ content: formatted });
         if (section.key) data.listData[section.key] = msg.id;
-      } else {
-        // Only edit if content differs
-        if (msg.content !== formatted) await msg.edit({ content: formatted });
+      } else if (msg.content !== formatted) {
+        await msg.edit({ content: formatted });
       }
     } catch (e) {
       console.error('KOS update error', e);
@@ -284,14 +281,14 @@ client.on('interactionCreate', async i => {
   if (!i.isChatInputCommand()) return;
   try {
     if (i.commandName === 'list') {
-      await i.deferReply({ ephemeral: true });
+      await i.deferReply({ ephemeral: true, flags: 64 });
       const listChannel = i.guild.channels.cache.get(data.listData.channelId);
       if (listChannel) await updateKosList(listChannel);
       await i.editReply({ content: 'KOS list updated.' });
     }
 
     if (i.commandName === 'panel') {
-      await i.deferReply({ ephemeral: true });
+      await i.deferReply({ ephemeral: true, flags: 64 });
       await updatePanel(i.channel);
       await i.editReply({ content: 'Panel updated.' });
     }
@@ -299,11 +296,11 @@ client.on('interactionCreate', async i => {
     if (i.commandName === 'submission') {
       data.listData.channelId = i.channelId;
       saveData();
-      await i.reply({ content: `Submission channel set to <#${i.channelId}>`, ephemeral: true });
+      await i.reply({ content: `Submission channel set to <#${i.channelId}>`, ephemeral: true, flags: 64 });
     }
   } catch (e) {
     console.error('Slash command error:', e);
-    if (!i.replied && !i.deferred) await i.reply({ content: 'Error occurred.', ephemeral: true }).catch(()=>{});
+    if (!i.replied && !i.deferred) await i.reply({ content: 'Error occurred.', ephemeral: true, flags: 64 }).catch(()=>{});
   }
 });
 
