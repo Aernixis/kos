@@ -47,12 +47,7 @@ function loadData() {
       }
 
       if (Array.isArray(oldData.clans)) {
-        data.clans = [...new Set(oldData.clans.map(c => {
-          if (typeof c === 'string') return c.trim();
-          if (c?.name && c?.region) return `${c.region}»${c.name}`;
-          if (c?.clan) return c.clan.trim();
-          return null;
-        }).filter(Boolean))];
+        data.clans = [...new Set(oldData.clans.map(c => String(c).trim().toUpperCase()).filter(Boolean))];
       }
 
       if (oldData.panelMessages) data.panelMessages = oldData.panelMessages;
@@ -114,6 +109,7 @@ async function updateKosList(channel) {
           if (msg) return (await msg.edit({ content }))?.id;
         }
       } catch {}
+      // Only send new messages if they don’t exist yet
       const msg = await channel.send({ content });
       return msg.id;
     }
@@ -208,13 +204,26 @@ client.on('messageCreate', async msg => {
   if (!msg.content.startsWith('^')) return;
 
   const args = msg.content.trim().split(/\s+/);
-  const cmd = args.shift().toLowerCase();
+  let cmd = args.shift().toLowerCase();
+
+  // Aliases
+  if (cmd === '^kos') {
+    const sub = args.shift()?.toLowerCase();
+    if (sub === 'add') cmd = '^ka';
+    else if (sub === 'remove') cmd = '^kr';
+    else if (sub === 'clan') {
+      const clanSub = args.shift()?.toLowerCase();
+      if (clanSub === 'add') cmd = '^kca';
+      else if (clanSub === 'remove') cmd = '^kcr';
+    }
+  } else if (cmd === '^priority') {
+    const sub = args.shift()?.toLowerCase();
+    if (sub === 'add') cmd = '^pa';
+    else if (sub === 'remove') cmd = '^pr';
+    else cmd = '^p';
+  }
+
   const kosCommands = ['^ka','^kr','^p','^pa','^pr','^kca','^kcr'];
-
-  let changed = false;
-  let actionText = '';
-
-  // Submission channel check
   if (data.listData.channelId && msg.channel.id !== data.listData.channelId && kosCommands.includes(cmd)) {
     try {
       const botMsg = await msg.channel.send(`<@${msg.author.id}> Use KOS commands in <#${data.listData.channelId}>.`);
@@ -223,7 +232,10 @@ client.on('messageCreate', async msg => {
     return;
   }
 
-  // -------- PLAYER COMMANDS --------
+  let changed = false;
+  let actionText = '';
+
+  // ---- Player commands ----
   if (cmd === '^ka') {
     const name = args.shift(), username = args.shift();
     if (!name || !username) return;
@@ -232,9 +244,7 @@ client.on('messageCreate', async msg => {
       changed = true;
       actionText = `Added ${name} : ${username}`;
     }
-  }
-
-  if (cmd === '^kr') {
+  } else if (cmd === '^kr') {
     const name = args.shift(), username = args.shift() || null;
     if (!name) return;
     const before = data.players.length;
@@ -246,14 +256,12 @@ client.on('messageCreate', async msg => {
     }
   }
 
-  // -------- PRIORITY COMMANDS --------
+  // ---- Priority commands ----
   if (['^p','^pa'].includes(cmd)) {
     const name = args.join(' ');
     if (!name || !canUsePriority(msg)) return;
     if (!data.priority.includes(name)) { data.priority.push(name); changed = true; actionText = `Added ${name} to priority`; }
-  }
-
-  if (cmd === '^pr') {
+  } else if (cmd === '^pr') {
     const name = args.join(' ');
     if (!name || !canUsePriority(msg)) return;
     const before = data.priority.length;
@@ -261,25 +269,27 @@ client.on('messageCreate', async msg => {
     if (before !== data.priority.length) { changed = true; actionText = `Removed ${name} from priority`; }
   }
 
-  // -------- CLAN COMMANDS --------
+  // ---- Clan commands ----
   if (cmd === '^kca') {
-    const clan = args.join(' ');
-    if (!clan) return;
+    const name = args.shift();
+    const region = args.shift();
+    if (!name || !region) return;
+    const clan = `${region.toUpperCase()}»${name.toUpperCase()}`;
     if (!data.clans.includes(clan)) { data.clans.push(clan); changed = true; actionText = `Added clan ${clan}`; }
-  }
-
-  if (cmd === '^kcr') {
-    const clan = args.join(' ');
+  } else if (cmd === '^kcr') {
+    const name = args.shift();
+    const region = args.shift();
+    if (!name || !region) return;
+    const clan = `${region.toUpperCase()}»${name.toUpperCase()}`;
     const before = data.clans.length;
     data.clans = data.clans.filter(c => c !== clan);
     if (before !== data.clans.length) { changed = true; actionText = `Removed clan ${clan}`; }
   }
 
   if (!changed) return;
-
   saveData();
 
-  // Send confirmation immediately and delete with command
+  // Send confirmation and delete both after 3s
   if (actionText) {
     try {
       const botMsg = await msg.channel.send(`<@${msg.author.id}> ${actionText}`);
@@ -287,14 +297,13 @@ client.on('messageCreate', async msg => {
     } catch {}
   }
 
-  // Update KOS list in background
+  // Update KOS list silently
   updateKosList(msg.channel).catch(console.error);
 });
 
 // ---------------- SLASH COMMANDS ----------------
 client.on('interactionCreate', async i => {
   if (!i.isChatInputCommand()) return;
-
   try {
     if (i.commandName === 'panel') await updatePanel(i.channel);
     if (i.commandName === 'list') await updateKosList(i.channel);
@@ -302,9 +311,7 @@ client.on('interactionCreate', async i => {
       data.listData.channelId = i.channelId;
       saveData();
     }
-  } catch (e) {
-    console.error('Slash command error:', e);
-  }
+  } catch (e) { console.error('Slash command error:', e); }
 });
 
 // ---------------- PERIODIC SAVE ----------------
