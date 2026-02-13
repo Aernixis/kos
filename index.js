@@ -102,13 +102,24 @@ async function updateKosList(channel) {
   ];
 
   for (const section of sections) {
-    const msgId = data.listData[section.key];
-    if (!msgId) continue; // never send new message
     try {
-      const msg = await channel.messages.fetch(msgId).catch(() => null);
-      if (!msg) continue;
       const formatted = '```' + section.title + '\n' + section.content + '\n```';
-      if (msg.content !== formatted) await msg.edit({ content: formatted });
+
+      let msg = null;
+
+      // If ID exists, try to fetch
+      if (section.key && data.listData[section.key]) {
+        msg = await channel.messages.fetch(data.listData[section.key]).catch(() => null);
+      }
+
+      // If message doesn’t exist, create it once
+      if (!msg) {
+        msg = await channel.send({ content: formatted });
+        if (section.key) data.listData[section.key] = msg.id;
+      } else {
+        // Only edit if content differs
+        if (msg.content !== formatted) await msg.edit({ content: formatted });
+      }
     } catch (e) {
       console.error('KOS update error', e);
     }
