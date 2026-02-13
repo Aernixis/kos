@@ -12,6 +12,18 @@ const client = new Client({
   partials: [Partials.Channel]
 });
 
+// ----------------- Tiny server for Render -----------------
+const app = express();
+const PORT = process.env.PORT || 5500;
+
+app.get('/', (req, res) => {
+  res.send('KOS bot is running!');
+});
+
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
+
 /* ===================== CONSTANTS ===================== */
 const OWNER_ID = '1283217337084018749';
 const PRIORITY_ROLE_ID = '1412837397607092405';
@@ -301,3 +313,4 @@ client.on('interactionCreate', async i => {
 
 /* ===================== LOGIN ===================== */
 client.login(process.env.TOKEN);
+
