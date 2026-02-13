@@ -19,9 +19,9 @@ const DATA_FILE = './data.json';
 
 /* ===================== DATA ===================== */
 let data = {
-  players: new Map(), // username -> { name, username }
-  priority: new Set(), // username
-  clans: new Set(), // REGION»NAME
+  players: new Map(),
+  priority: new Set(),
+  clans: new Set(),
   submissionChannel: null,
   listMessages: {
     players: null,
@@ -91,7 +91,7 @@ function formatClans() {
   return data.clans.size ? [...data.clans].sort().join('\n') : 'None';
 }
 
-/* ===================== SECTION UPDATERS ===================== */
+/* ===================== SECTION UPDATER ===================== */
 async function updateSection(channel, key) {
   if (!channel) return;
 
@@ -116,6 +116,15 @@ async function updateSection(channel, key) {
     data.listMessages[key] = msg.id;
     saveData();
   }
+}
+
+/* ===================== LIST CREATOR (SLASH ONLY) ===================== */
+async function createFreshList(channel) {
+  if (!channel) return;
+
+  await channel.send(`\`\`\`–––––– PLAYERS ––––––\n${formatPlayers()}\n\`\`\``);
+  await channel.send(`\`\`\`–––––– PRIORITY ––––––\n${formatPriority()}\n\`\`\``);
+  await channel.send(`\`\`\`–––––– CLANS ––––––\n${formatClans()}\n\`\`\``);
 }
 
 /* ===================== PANEL ===================== */
@@ -218,20 +227,27 @@ client.on('messageCreate', async msg => {
   deleteTogether(msg, m);
 });
 
-/* ===================== SLASH COMMANDS ===================== */
+/* ===================== SLASH COMMANDS (SAFE) ===================== */
 client.on('interactionCreate', async i => {
   if (!i.isChatInputCommand()) return;
 
-  if (i.commandName === 'panel') {
-    await i.reply({ content: 'Panel updated.', ephemeral: true });
-    await updatePanel(i.channel);
-  }
+  try {
+    if (i.commandName === 'panel') {
+      await i.deferReply({ ephemeral: true });
+      await updatePanel(i.channel);
+      await i.editReply('Panel created.');
+    }
 
-  if (i.commandName === 'list') {
-    await i.reply({ content: 'KOS list created.', ephemeral: true });
-    await updateSection(i.channel, 'players');
-    await updateSection(i.channel, 'priority');
-    await updateSection(i.channel, 'clans');
+    if (i.commandName === 'list') {
+      await i.deferReply({ ephemeral: true });
+      await createFreshList(i.channel);
+      await i.editReply('New KOS list created.');
+    }
+  } catch (err) {
+    console.error('Interaction error:', err);
+    if (!i.replied && !i.deferred) {
+      i.reply({ content: 'An error occurred.', ephemeral: true }).catch(() => {});
+    }
   }
 });
 
