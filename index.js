@@ -19,41 +19,31 @@ const DATA_FILE = './data.json';
 
 /* ===================== DATA ===================== */
 let data = {
-  players: new Map(),
-  priority: new Set(),
-  clans: new Set(),
-  submissionChannel: null,
-  listMessages: {
-    players: null,
-    priority: null,
-    clans: null
-  }
+  players: [],        // array of { name, username, addedBy }
+  topPriority: [],    // array of usernames
+  clans: [],          // array of strings REGION»NAME
+  submissionChannelId: null,
+  listData: {         // section message IDs
+    playersMessageId: null,
+    priorityMessageId: null,
+    clansMessageId: null
+  },
+  panelMessages: {
+    gif: null,
+    tutorial: null
+  },
+  revision: 0
 };
 
 /* ===================== LOAD / SAVE ===================== */
 function saveData() {
-  fs.writeFileSync(DATA_FILE, JSON.stringify({
-    players: [...data.players.values()],
-    priority: [...data.priority],
-    clans: [...data.clans],
-    submissionChannel: data.submissionChannel,
-    listMessages: data.listMessages
-  }, null, 2));
+  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
 }
 
 function loadData() {
   if (!fs.existsSync(DATA_FILE)) return;
   const raw = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-
-  data.players = new Map();
-  raw.players?.forEach(p => {
-    if (p.username) data.players.set(p.username, p);
-  });
-
-  data.priority = new Set(raw.priority || []);
-  data.clans = new Set(raw.clans || []);
-  data.submissionChannel = raw.submissionChannel || null;
-  data.listMessages = raw.listMessages || data.listMessages;
+  data = { ...data, ...raw };
 }
 loadData();
 
@@ -63,68 +53,57 @@ function canUsePriority(msg) {
   return msg.member?.roles.cache.has(PRIORITY_ROLE_ID);
 }
 
-function deleteTogether(userMsg, botMsg, delay = 3500) {
+function rev() {
+  data.revision++;
+  return '\u200B'.repeat((data.revision % 10) + 1);
+}
+
+async function deleteTogether(userMsg, botMsg, delay = 3000) {
   setTimeout(() => {
-    userMsg.delete().catch(() => {});
-    botMsg.delete().catch(() => {});
+    userMsg?.delete().catch(() => {});
+    botMsg?.delete().catch(() => {});
   }, delay);
 }
 
 /* ===================== FORMATTERS ===================== */
 function formatPlayers() {
-  const rows = [...data.players.values()]
-    .filter(p => !data.priority.has(p.username))
+  return data.players
+    .filter(p => !data.topPriority.includes(p.username))
     .sort((a, b) => a.name.localeCompare(b.name))
-    .map(p => `${p.name} : ${p.username || 'N/A'}`);
-  return rows.length ? rows.join('\n') : 'None';
+    .map(p => `${p.name} : ${p.username || 'N/A'}`)
+    .join('\n') || 'None';
 }
 
 function formatPriority() {
-  const rows = [...data.priority]
-    .map(u => data.players.get(u))
-    .filter(Boolean)
-    .map(p => `${p.name} : ${p.username}`);
-  return rows.length ? rows.join('\n') : 'None';
+  return data.topPriority
+    .map(u => {
+      const p = data.players.find(p => p.username === u);
+      return p ? `${p.name} : ${p.username}` : `${u} : ${u}`;
+    })
+    .join('\n') || 'None';
 }
 
 function formatClans() {
-  return data.clans.size ? [...data.clans].sort().join('\n') : 'None';
+  return data.clans.length ? [...data.clans].sort().join('\n') : 'None';
 }
 
-/* ===================== SECTION UPDATER ===================== */
+/* ===================== SECTION-UPDATER ===================== */
 async function updateSection(channel, key) {
   if (!channel) return;
 
   const map = {
-    players: ['–––––– PLAYERS ––––––', formatPlayers()],
-    priority: ['–––––– PRIORITY ––––––', formatPriority()],
-    clans: ['–––––– CLANS ––––––', formatClans()]
+    players: ['–––––– PLAYERS ––––––', formatPlayers(), data.listData.playersMessageId],
+    topPriority: ['–––––– PRIORITY ––––––', formatPriority(), data.listData.priorityMessageId],
+    clans: ['–––––– CLANS ––––––', formatClans(), data.listData.clansMessageId]
   };
 
-  const [title, content] = map[key];
-  const text = `\`\`\`${title}\n${content}\n\`\`\``;
+  const [title, content, msgId] = map[key];
+  if (!msgId) return; // Never create messages from prefix commands
 
-  let msg = null;
-  if (data.listMessages[key]) {
-    msg = await channel.messages.fetch(data.listMessages[key]).catch(() => null);
-  }
+  const text = `\`\`\`${title}\n${content}\n\`\`\`${rev()}`;
 
-  if (msg) {
-    await msg.edit(text);
-  } else {
-    msg = await channel.send(text);
-    data.listMessages[key] = msg.id;
-    saveData();
-  }
-}
-
-/* ===================== LIST CREATOR (SLASH ONLY) ===================== */
-async function createFreshList(channel) {
-  if (!channel) return;
-
-  await channel.send(`\`\`\`–––––– PLAYERS ––––––\n${formatPlayers()}\n\`\`\``);
-  await channel.send(`\`\`\`–––––– PRIORITY ––––––\n${formatPriority()}\n\`\`\``);
-  await channel.send(`\`\`\`–––––– CLANS ––––––\n${formatClans()}\n\`\`\``);
+  const msg = await channel.messages.fetch(msgId).catch(() => null);
+  if (msg) await msg.edit(text);
 }
 
 /* ===================== PANEL ===================== */
@@ -139,115 +118,161 @@ async function updatePanel(channel) {
     .setTitle('KOS Submission System')
     .setColor(0xFF0000)
     .setDescription(
-      `Players: ^ka name username | ^kr username\n` +
-      `Clans: ^kca name region | ^kcr name region\n` +
-      `Priority: ^p add username | ^p remove username`
+      `Players ^ka name username ^kr name username\nClans ^kca name region ^kcr name region\nPriority ^p add username ^p remove username`
     );
 
-  await channel.send({ embeds: [gif] });
-  await channel.send({ embeds: [info] });
+  async function upsert(id, embed) {
+    if (id) {
+      const msg = await channel.messages.fetch(id).catch(() => null);
+      if (msg) return (await msg.edit({ embeds: [embed] })).id;
+    }
+    const msg = await channel.send({ embeds: [embed] });
+    return msg.id;
+  }
+
+  data.panelMessages.gif = await upsert(data.panelMessages.gif, gif);
+  data.panelMessages.tutorial = await upsert(data.panelMessages.tutorial, info);
+  saveData();
 }
 
 /* ===================== PREFIX COMMANDS ===================== */
 client.on('messageCreate', async msg => {
   if (msg.author.bot) return;
   if (!msg.content.startsWith('^')) return;
+  if (msg._handled) return;
+  msg._handled = true;
 
   const args = msg.content.trim().split(/\s+/);
   const cmd = args.shift().toLowerCase();
 
+  /* SUBMISSION */
   if (cmd === '^submission') {
-    data.submissionChannel = msg.channel.id;
+    data.submissionChannelId = msg.channel.id;
     saveData();
     const m = await msg.channel.send(`KOS commands locked to <#${msg.channel.id}>`);
-    return deleteTogether(msg, m);
+    deleteTogether(msg, m, 4000);
+    return;
   }
 
-  if (data.submissionChannel && msg.channel.id !== data.submissionChannel) {
-    const m = await msg.channel.send(`Use KOS messages in <#${data.submissionChannel}>.`);
-    return deleteTogether(msg, m);
+  if (data.submissionChannelId && msg.channel.id !== data.submissionChannelId) {
+    const m = await msg.channel.send(`Use KOS messages in <#${data.submissionChannelId}>.`);
+    deleteTogether(msg, m, 4000);
+    return;
   }
 
-  let reply = null;
-  let section = null;
+  let changed = false;
+  let reply = '';
 
+  /* ADD PLAYER */
   if (cmd === '^ka') {
     const [name, username] = args;
-    if (!username || data.players.has(username)) return;
-    data.players.set(username, { name, username });
+    if (!username || data.players.some(p => p.username === username)) return;
+
+    data.players.push({ name, username, addedBy: msg.author.id });
+    saveData();
+    changed = true;
     reply = `Added ${name} : ${username}`;
-    section = 'players';
+
+    // update section ONLY if message exists
+    if (data.listData.playersMessageId) await updateSection(msg.channel, 'players');
   }
 
+  /* REMOVE PLAYER */
   if (cmd === '^kr') {
     const username = args[0];
-    if (data.players.delete(username)) {
-      data.priority.delete(username);
+    const index = data.players.findIndex(p => p.username === username);
+    if (index !== -1) {
+      data.players.splice(index, 1);
+      data.topPriority = data.topPriority.filter(u => u !== username);
+      saveData();
+      changed = true;
       reply = `Removed ${username}`;
-      section = 'players';
+      if (data.listData.playersMessageId) await updateSection(msg.channel, 'players');
     }
   }
 
+  /* ADD CLAN */
   if (cmd === '^kca') {
-    const clan = `${args[1].toUpperCase()}»${args[0].toUpperCase()}`;
-    if (!data.clans.has(clan)) {
-      data.clans.add(clan);
+    const [name, region] = args;
+    const clan = `${region.toUpperCase()}»${name.toUpperCase()}`;
+    if (!data.clans.includes(clan)) {
+      data.clans.push(clan);
+      saveData();
+      changed = true;
       reply = `Added clan ${clan}`;
-      section = 'clans';
+      if (data.listData.clansMessageId) await updateSection(msg.channel, 'clans');
     }
   }
 
+  /* REMOVE CLAN */
   if (cmd === '^kcr') {
-    const clan = `${args[1].toUpperCase()}»${args[0].toUpperCase()}`;
-    if (data.clans.delete(clan)) {
+    const [name, region] = args;
+    const clan = `${region.toUpperCase()}»${name.toUpperCase()}`;
+    const index = data.clans.indexOf(clan);
+    if (index !== -1) {
+      data.clans.splice(index, 1);
+      saveData();
+      changed = true;
       reply = `Removed clan ${clan}`;
-      section = 'clans';
+      if (data.listData.clansMessageId) await updateSection(msg.channel, 'clans');
     }
   }
 
+  /* PRIORITY */
   if (cmd === '^p' && canUsePriority(msg)) {
     if (args[0] === 'add') {
-      data.priority.add(args[1]);
+      if (!data.topPriority.includes(args[1])) data.topPriority.push(args[1]);
+      saveData();
+      changed = true;
       reply = `Added ${args[1]} to priority`;
-      section = 'priority';
+      if (data.listData.priorityMessageId) await updateSection(msg.channel, 'topPriority');
     }
     if (args[0] === 'remove') {
-      data.priority.delete(args[1]);
+      data.topPriority = data.topPriority.filter(u => u !== args[1]);
+      saveData();
+      changed = true;
       reply = `Removed ${args[1]} from priority`;
-      section = 'priority';
+      if (data.listData.priorityMessageId) await updateSection(msg.channel, 'topPriority');
     }
   }
 
-  if (!reply) return;
-
-  saveData();
-  await updateSection(msg.channel, section);
+  if (!changed) return;
 
   const m = await msg.channel.send(`<@${msg.author.id}> ${reply}`);
   deleteTogether(msg, m);
 });
 
-/* ===================== SLASH COMMANDS (SAFE) ===================== */
+/* ===================== SLASH COMMANDS ===================== */
 client.on('interactionCreate', async i => {
   if (!i.isChatInputCommand()) return;
 
-  try {
-    if (i.commandName === 'panel') {
-      await i.deferReply({ ephemeral: true });
-      await updatePanel(i.channel);
-      await i.editReply('Panel created.');
-    }
+  if (i.user.id !== OWNER_ID) {
+    return i.reply({ content: 'Only the bot owner can use this command.', ephemeral: true }).catch(() => {});
+  }
 
-    if (i.commandName === 'list') {
-      await i.deferReply({ ephemeral: true });
-      await createFreshList(i.channel);
-      await i.editReply('New KOS list created.');
+  if (i.commandName === 'panel') {
+    await i.reply({ content: 'Panel updated.', ephemeral: true });
+    await updatePanel(i.channel);
+  }
+
+  if (i.commandName === 'list') {
+    await i.reply({ content: 'KOS list created.', ephemeral: true });
+
+    // create section messages if missing
+    const sections = ['players', 'topPriority', 'clans'];
+    for (const key of sections) {
+      if (!data.listData[`${key}MessageId`]) {
+        const map = {
+          players: formatPlayers(),
+          topPriority: formatPriority(),
+          clans: formatClans()
+        };
+        const text = `\`\`\`–––––– ${key.toUpperCase()} ––––––\n${map[key]}\n\`\`\`${rev()}`;
+        const msg = await i.channel.send(text);
+        data.listData[`${key}MessageId`] = msg.id;
+      }
     }
-  } catch (err) {
-    console.error('Interaction error:', err);
-    if (!i.replied && !i.deferred) {
-      i.reply({ content: 'An error occurred.', ephemeral: true }).catch(() => {});
-    }
+    saveData();
   }
 });
 
