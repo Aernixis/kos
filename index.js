@@ -11,10 +11,11 @@ const client = new Client({
     partials: [Partials.Channel]
 });
 
+// ===================== CONSTANTS =====================
 const OWNER_ID = '1283217337084018749';
 const DATA_FILE = './data.json';
 
-/* ===================== LOAD DATA WITH SAFE DEFAULTS ===================== */
+// ===================== LOAD DATA WITH SAFE DEFAULTS =====================
 let data = {
     players: [],
     priority: [],
@@ -39,26 +40,32 @@ if (fs.existsSync(DATA_FILE)) {
 const save = () => fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
 const norm = s => s.toLowerCase();
 
-/* ===================== FORMAT ===================== */
-const fmt = p => p.username ? `${p.name} : ${p.username}` : p.name;
+// ===================== FORMAT FUNCTIONS =====================
+const fmtPlayer = p => p.name + (p.username ? ` : ${p.username}` : '');
 
 const playersText = () =>
-    data.players
-        .filter(p => !data.priority.includes(norm(p.name)))
-        .sort((a,b)=>a.name.localeCompare(b.name))
-        .map(fmt).join('\n') || 'None';
+  (data.players || [])
+    .filter(p => !data.priority.includes(norm(p.name)))
+    .sort((a,b)=>a.name.localeCompare(b.name))
+    .map(fmtPlayer)
+    .join('\n') || 'None';
 
 const priorityText = () =>
-    data.priority
-        .map(n => data.players.find(p=>norm(p.name)===n))
-        .filter(Boolean)
-        .map(fmt)
-        .sort().join('\n') || 'None';
+  (data.priority || [])
+    .map(n => data.players.find(p=>norm(p.name)===n))
+    .filter(Boolean)
+    .map(fmtPlayer)
+    .sort()
+    .join('\n') || 'None';
 
 const clansText = () =>
-    data.clans.map(c=>`${c.clan} ${c.region || ''}`.trim()).sort().join('\n') || 'None';
+  (data.clans || [])
+    .filter(c => c && c.clan)
+    .map(c => c.clan)
+    .sort()
+    .join('\n') || 'None';
 
-/* ===================== MESSAGE CONTROL ===================== */
+// ===================== EDIT OR CREATE MESSAGE =====================
 async function editOrCreate(channel, id, payload) {
     if (id) {
         const msg = await channel.messages.fetch(id).catch(()=>null);
@@ -71,41 +78,35 @@ async function editOrCreate(channel, id, payload) {
     return msg.id;
 }
 
+// ===================== LIST UPDATE =====================
 async function updateList(channel) {
     if (!channel) return;
-
     data.list.channelId = channel.id;
 
-    data.list.players = await editOrCreate(
-        channel,
-        data.list.players,
-        { content: `\`\`\`\n–––––– PLAYERS ––––––\n${playersText()}\n\`\`\`` }
-    );
+    data.list.players = await editOrCreate(channel, data.list.players, {
+        content: `\`\`\`\n–––––– PLAYERS ––––––\n${playersText()}\n\`\`\``
+    });
 
-    data.list.priority = await editOrCreate(
-        channel,
-        data.list.priority,
-        { content: `\`\`\`\n–––––– PRIORITY ––––––\n${priorityText()}\n\`\`\`` }
-    );
+    data.list.priority = await editOrCreate(channel, data.list.priority, {
+        content: `\`\`\`\n–––––– PRIORITY ––––––\n${priorityText()}\n\`\`\``
+    });
 
-    data.list.clans = await editOrCreate(
-        channel,
-        data.list.clans,
-        { content: `\`\`\`\n–––––– CLANS ––––––\n${clansText()}\n\`\`\`` }
-    );
+    data.list.clans = await editOrCreate(channel, data.list.clans, {
+        content: `\`\`\`\n–––––– CLANS ––––––\n${clansText()}\n\`\`\``
+    });
 
     save();
 }
 
-/* ===================== PANEL ===================== */
+// ===================== PANEL =====================
 async function updatePanel(channel) {
     if (!channel) return;
 
-    const gif = new EmbedBuilder()
+    const gifEmbed = new EmbedBuilder()
         .setColor(0xFF0000)
         .setImage('https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExc2FoODRjMmVtNmhncjkyZzY0ZGVwa2l3dzV0M3UyYmZ4bjVsZ2pnOCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/iuttaLUMRLWEgJKRHx/giphy.gif');
 
-    const tutorial = new EmbedBuilder()
+    const tutorialEmbed = new EmbedBuilder()
         .setColor(0xFF0000)
         .setTitle('KOS Submission System')
         .setDescription(`
@@ -138,17 +139,17 @@ Example:
 Thank you for being apart of YX!
         `);
 
-    data.panel.gif = await editOrCreate(channel, data.panel.gif, { embeds:[gif] });
-    data.panel.tutorial = await editOrCreate(channel, data.panel.tutorial, { embeds:[tutorial] });
+    data.panel.gif = await editOrCreate(channel, data.panel.gif, { embeds: [gifEmbed] });
+    data.panel.tutorial = await editOrCreate(channel, data.panel.tutorial, { embeds: [tutorialEmbed] });
 
     save();
 }
 
-/* ===================== PREFIX COMMANDS ===================== */
+// ===================== PREFIX COMMANDS =====================
 client.on('messageCreate', async msg => {
     if (msg.author.bot || !msg.content.startsWith('^')) return;
 
-    const args = msg.content.split(/\s+/);
+    const args = msg.content.trim().split(/\s+/);
     const cmd = args[0].toLowerCase();
 
     const respond = async text => {
@@ -156,12 +157,11 @@ client.on('messageCreate', async msg => {
         setTimeout(()=>{ m.delete().catch(()=>{}); msg.delete().catch(()=>{}); },3000);
     };
 
+    // ----- PLAYER COMMANDS -----
     if (cmd === '^ka') {
         const [_, name, username] = args;
         if (!name || !username) return respond('Name and username required.');
-
-        if (data.players.some(p=>norm(p.name)===norm(name) && p.username===username))
-            return respond('That player already exists.');
+        if (data.players.some(p=>norm(p.name)===norm(name) && p.username===username)) return respond('Player already exists.');
 
         data.players.push({ name, username });
         save();
@@ -187,9 +187,70 @@ client.on('messageCreate', async msg => {
         }
         return respond(`Removed ${name}`);
     }
+
+    // ----- PRIORITY -----
+    if (['^p','^pa','^pr'].includes(cmd)) {
+        const name = args[1];
+        if (!name) return respond('Name required.');
+        const key = norm(name);
+
+        if (!data.players.some(p => norm(p.name) === key) && cmd === '^pa') {
+            const username = args[2] || '';
+            data.players.push({ name, username });
+        }
+
+        if (cmd === '^p' || cmd === '^pa') {
+            if (!data.priority.includes(key)) data.priority.push(key);
+            save();
+            if (data.list.channelId) {
+                const ch = await client.channels.fetch(data.list.channelId);
+                await updateList(ch);
+            }
+            return respond(`Prioritized ${name}`);
+        }
+
+        if (cmd === '^pr') {
+            data.priority = data.priority.filter(n=>n!==key);
+            save();
+            if (data.list.channelId) {
+                const ch = await client.channels.fetch(data.list.channelId);
+                await updateList(ch);
+            }
+            return respond(`Demoted ${name}`);
+        }
+    }
+
+    // ----- CLAN COMMANDS -----
+    if (cmd === '^kca') {
+        const name = args[1], region = args[2];
+        if (!name || !region) return respond('Clan name and region required.');
+        const clanStr = `${region.toUpperCase()}»${name.toUpperCase()}`;
+        if (data.clans.some(c=>c.clan===clanStr)) return respond('Clan already exists.');
+
+        data.clans.push({ clan: clanStr });
+        save();
+        if (data.list.channelId) {
+            const ch = await client.channels.fetch(data.list.channelId);
+            await updateList(ch);
+        }
+        return respond(`Added clan ${clanStr}`);
+    }
+
+    if (cmd === '^kcr') {
+        const name = args[1], region = args[2];
+        if (!name || !region) return respond('Clan name and region required.');
+        const clanStr = `${region.toUpperCase()}»${name.toUpperCase()}`;
+        data.clans = data.clans.filter(c=>c.clan!==clanStr);
+        save();
+        if (data.list.channelId) {
+            const ch = await client.channels.fetch(data.list.channelId);
+            await updateList(ch);
+        }
+        return respond(`Removed clan ${clanStr}`);
+    }
 });
 
-/* ===================== SLASH COMMANDS ===================== */
+// ===================== SLASH COMMANDS =====================
 client.on('interactionCreate', async i => {
     if (!i.isChatInputCommand() || i.user.id !== OWNER_ID) return;
 
@@ -212,7 +273,7 @@ client.on('interactionCreate', async i => {
     }
 });
 
-/* ===================== READY ===================== */
+// ===================== READY =====================
 client.once('ready', () =>
     console.log(`Logged in as ${client.user.tag}`)
 );
