@@ -12,18 +12,6 @@ const client = new Client({
   partials: [Partials.Channel]
 });
 
-// ----------------- Tiny server for Render -----------------
-const app = express();
-const PORT = process.env.PORT || 5500;
-
-app.get('/', (req, res) => {
-  res.send('KOS bot is running!');
-});
-
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
-
 /* ===================== CONSTANTS ===================== */
 const OWNER_ID = '1283217337084018749';
 const PRIORITY_ROLE_ID = '1412837397607092405';
@@ -73,7 +61,7 @@ function formatPlayers() {
   const rows = data.players
     .filter(p => !data.topPriority.includes(p.username))
     .sort((a, b) => a.name.localeCompare(b.name))
-    .map(p => `${p.name} : ${p.username}`);
+    .map(p => `${p.name} : ${p.username || 'N/A'}`);
   return rows.length ? rows.join('\n') : 'None';
 }
 
@@ -214,32 +202,23 @@ client.on('messageCreate', async msg => {
   if (cmd === '^kr') {
     if (args.length < 1) return;
 
-    const usernameOrName = args[1] || args[0]; // prefer username if provided
-    let removed = false;
-    let removedName = usernameOrName;
+    const usernameOrName = args[1] || args[0];
+    const player = data.players.find(p => p.username === usernameOrName || p.name === usernameOrName);
+    if (!player) return;
 
-    const index = data.players.findIndex(p => p.username === usernameOrName);
-    if (index !== -1) {
-      const removedPlayer = data.players.splice(index, 1)[0];
-      data.topPriority = data.topPriority.filter(u => u !== removedPlayer.username);
-      removed = true;
-      removedName = removedPlayer.username;
-    } else {
-      const index2 = data.players.findIndex(p => p.name === usernameOrName);
-      if (index2 !== -1) {
-        const removedPlayer = data.players.splice(index2, 1)[0];
-        data.topPriority = data.topPriority.filter(u => u !== removedPlayer.username);
-        removed = true;
-        removedName = removedPlayer.username || removedPlayer.name;
-      }
+    // Safety: only remover if they added the player or are owner/priority
+    if (player.addedBy !== msg.author.id && !canUsePriority(msg)) {
+      const m = await msg.channel.send(`<@${msg.author.id}> You didn't add this player.`);
+      return deleteMsg(m);
     }
 
-    if (!removed) return;
+    data.players = data.players.filter(p => p !== player);
+    data.topPriority = data.topPriority.filter(u => u !== player.username);
 
     saveData();
     if (data.listData.playersMessageId) await updateSection(msg.channel, 'players');
 
-    const m = await msg.channel.send(`<@${msg.author.id}> Removed ${removedName}`);
+    const m = await msg.channel.send(`<@${msg.author.id}> Removed ${player.username || player.name}`);
     return deleteMsg(m);
   }
 
@@ -313,4 +292,3 @@ client.on('interactionCreate', async i => {
 
 /* ===================== LOGIN ===================== */
 client.login(process.env.TOKEN);
-
