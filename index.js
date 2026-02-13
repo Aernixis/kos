@@ -78,7 +78,7 @@ function formatPriority() {
   return data.topPriority
     .map(u => {
       const p = data.players.find(p => p.username === u);
-      return p ? `${p.name} : ${p.username}` : null; // leave missing usernames blank
+      return p ? `${p.name} : ${p.username}` : null; // leave blank if missing
     })
     .filter(Boolean)
     .join('\n') || 'None';
@@ -89,17 +89,18 @@ function formatClans() {
 }
 
 /* ===================== SECTION-UPDATER ===================== */
+const sectionMap = {
+  players: ['–––––– PLAYERS ––––––', formatPlayers(), 'playersMessageId'],
+  topPriority: ['–––––– PRIORITY ––––––', formatPriority(), 'priorityMessageId'],
+  clans: ['–––––– CLANS ––––––', formatClans(), 'clansMessageId']
+};
+
 async function updateSection(channel, key) {
   if (!channel) return;
 
-  const map = {
-    players: ['–––––– PLAYERS ––––––', formatPlayers(), data.listData.playersMessageId],
-    topPriority: ['–––––– PRIORITY ––––––', formatPriority(), data.listData.priorityMessageId],
-    clans: ['–––––– CLANS ––––––', formatClans(), data.listData.clansMessageId]
-  };
-
-  const [title, content, msgId] = map[key];
-  if (!msgId) return; // never create messages from prefix commands
+  const [title, content, msgKey] = sectionMap[key];
+  const msgId = data.listData[msgKey];
+  if (!msgId) return; // prefix commands never create new messages
 
   const msg = await channel.messages.fetch(msgId).catch(() => null);
   if (msg) await msg.edit(`\`\`\`${title}\n${content}\n\`\`\`${rev()}`);
@@ -173,7 +174,7 @@ client.on('messageCreate', async msg => {
 
     if (data.listData.playersMessageId) await updateSection(msg.channel, 'players');
 
-    const m = await msg.channel.send(`<@${msg.author.id}> Added ${name} : ${username}`);
+    const m = await msg.channel.send(`<@${msg.author.id}> Added ${username}`);
     return deleteTogether(msg, m);
   }
 
@@ -181,6 +182,7 @@ client.on('messageCreate', async msg => {
   if (cmd === '^kr') {
     const [nameOrUsername, maybeUsername] = args;
     let removed = false;
+    let removedName = maybeUsername || nameOrUsername;
 
     if (maybeUsername) {
       const index = data.players.findIndex(p => p.username === maybeUsername);
@@ -195,6 +197,7 @@ client.on('messageCreate', async msg => {
         const removedPlayer = data.players.splice(index, 1)[0];
         data.topPriority = data.topPriority.filter(u => u !== removedPlayer.username);
         removed = true;
+        removedName = removedPlayer.username || removedPlayer.name;
       }
     }
 
@@ -203,7 +206,7 @@ client.on('messageCreate', async msg => {
     saveData();
     if (data.listData.playersMessageId) await updateSection(msg.channel, 'players');
 
-    const m = await msg.channel.send(`<@${msg.author.id}> Removed ${maybeUsername || nameOrUsername}`);
+    const m = await msg.channel.send(`<@${msg.author.id}> Removed ${removedName}`);
     return deleteTogether(msg, m);
   }
 
@@ -274,15 +277,17 @@ client.on('interactionCreate', async i => {
 
     const sections = ['players', 'topPriority', 'clans'];
     for (const key of sections) {
-      if (!data.listData[`${key}MessageId`]) {
+      const msgKey = sectionMap[key][2];
+      if (!data.listData[msgKey]) {
         const map = {
           players: formatPlayers(),
           topPriority: formatPriority(),
           clans: formatClans()
         };
-        const text = `\`\`\`–––––– ${key.toUpperCase()} ––––––\n${map[key]}\n\`\`\`${rev()}`;
+        const title = key === 'topPriority' ? '–––––– PRIORITY ––––––' : `–––––– ${key.toUpperCase()} ––––––`;
+        const text = `\`\`\`${title}\n${map[key]}\n\`\`\`${rev()}`;
         const msg = await i.channel.send(text);
-        data.listData[`${key}MessageId`] = msg.id;
+        data.listData[msgKey] = msg.id;
       }
     }
     saveData();
