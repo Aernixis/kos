@@ -53,6 +53,9 @@ const norm = s => s.toLowerCase();
 let panelUpdating = false;
 let listUpdating = false;
 
+// Queue for KOS list updates to prevent doubling
+let listUpdatePromise = Promise.resolve();
+
 function canUsePriority(msg) {
     if (msg.author.id === OWNER_ID) return true;
     return msg.member?.roles.cache.has(PRIORITY_ROLE_ID);
@@ -82,52 +85,59 @@ function formatClans() {
         .join('\n');
 }
 
-// ---------------- LIST UPDATE ----------------
+// ---------------- LIST UPDATE (QUEUE SAFE) ----------------
 async function updateKosList(channel) {
-    if (!channel || listUpdating) return;
-    listUpdating = true;
-    kosData.listData.channelId = channel.id;
+    if (!channel) return;
 
-    async function fetchOrSend(id, content) {
-        try {
-            if (id) {
-                const msg = await channel.messages.fetch(id).catch(()=>null);
-                if (msg) {
-                    await msg.edit({ content });
-                    return msg.id;
+    // Queue updates to prevent overlap
+    listUpdatePromise = listUpdatePromise.then(async () => {
+        if (listUpdating) return;
+        listUpdating = true;
+        kosData.listData.channelId = channel.id;
+
+        async function fetchOrSend(id, content) {
+            try {
+                if (id) {
+                    const msg = await channel.messages.fetch(id).catch(()=>null);
+                    if (msg) {
+                        await msg.edit({ content });
+                        return msg.id;
+                    }
                 }
-            }
-        } catch {}
-        const msg = await channel.send({ content });
-        return msg.id;
-    }
+            } catch {}
+            const msg = await channel.send({ content });
+            return msg.id;
+        }
 
-    kosData.listData.playersMessageId = await fetchOrSend(
-        kosData.listData.playersMessageId,
-        `\`\`\`
+        kosData.listData.playersMessageId = await fetchOrSend(
+            kosData.listData.playersMessageId,
+            `\`\`\`
 –––––––– PLAYERS ––––––
 ${formatPlayers()}
 \`\`\``
-    );
+        );
 
-    kosData.listData.priorityMessageId = await fetchOrSend(
-        kosData.listData.priorityMessageId,
-        `\`\`\`
+        kosData.listData.priorityMessageId = await fetchOrSend(
+            kosData.listData.priorityMessageId,
+            `\`\`\`
 –––––––– PRIORITY ––––––
 ${formatPriority()}
 \`\`\``
-    );
+        );
 
-    kosData.listData.clansMessageId = await fetchOrSend(
-        kosData.listData.clansMessageId,
-        `\`\`\`
+        kosData.listData.clansMessageId = await fetchOrSend(
+            kosData.listData.clansMessageId,
+            `\`\`\`
 –––––––– CLANS ––––––
 ${formatClans()}
 \`\`\``
-    );
+        );
 
-    saveData();
-    listUpdating = false;
+        saveData();
+        listUpdating = false;
+    }).catch(console.error);
+
+    return listUpdatePromise;
 }
 
 // ---------------- PANEL UPDATE ----------------
@@ -197,7 +207,6 @@ client.on('messageCreate', async msg => {
 
     const p = msg.content.trim().split(/\s+/);
     const cmd = p[0].toLowerCase();
-
     let handled = false;
 
     async function sendReplyOnce(text) {
@@ -215,7 +224,7 @@ client.on('messageCreate', async msg => {
     async function updateList() {
         if (kosData.listData.channelId) {
             const ch = await client.channels.fetch(kosData.listData.channelId).catch(()=>null);
-            if (ch) updateKosList(ch);
+            if (ch) updateKosList(ch).catch(console.error);
         }
     }
 
