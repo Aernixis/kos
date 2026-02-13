@@ -180,10 +180,12 @@ Thank you for being part of YX!
                     if (msg) return (await msg.edit({ embeds: [embed] }))?.id;
                 }
             } catch {}
+            // Only send if message does not exist
             const msg = await channel.send({ embeds: [embed] });
             return msg.id;
         }
 
+        // always reuse existing messages
         kosData.panelMessages.gif = await fetchOrSendEmbed(kosData.panelMessages.gif, gifEmbed);
         kosData.panelMessages.tutorial = await fetchOrSendEmbed(kosData.panelMessages.tutorial, infoEmbed);
 
