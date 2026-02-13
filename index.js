@@ -92,13 +92,18 @@ function formatPlayers() {
 }
 
 function formatPriority() {
-  const rows = [...data.priority]
-    .map(u => {
-      const p = data.players.get(u);
-      return p ? `${p.name} : ${p.username}` : u;
-    });
+  const rows = [...data.priority].map(u => {
+    // First try by username
+    let p = data.players.get(u);
+    if (!p) {
+      // Fallback: try matching by name (case-insensitive)
+      p = [...data.players.values()].find(pl => pl.name.toLowerCase() === u.toLowerCase());
+    }
+    return p ? `${p.name} : ${p.username || p.name}` : u; // fallback to raw
+  });
   return rows.length ? rows.join('\n') : 'None';
 }
+
 
 function formatClans() {
   return data.clans.size ? [...data.clans].sort().join('\n') : 'None';
@@ -343,3 +348,4 @@ client.on('interactionCreate', async i => {
 
 /* ===================== LOGIN ===================== */
 client.login(process.env.TOKEN);
+
