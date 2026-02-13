@@ -66,11 +66,8 @@ function formatPlayers() {
 }
 
 function formatPriority() {
-  const rows = data.topPriority
-    .map(u => data.players.find(p => p.username === u))
-    .filter(Boolean)
-    .map(p => `${p.name} : ${p.username}`);
-  return rows.length ? rows.join('\n') : 'None';
+  // ✅ Show all usernames in topPriority even if player isn't in players
+  return data.topPriority.length ? data.topPriority.join('\n') : 'None';
 }
 
 function formatClans() {
@@ -295,8 +292,7 @@ client.on('interactionCreate', async i => {
 
   if (i.commandName === 'list') {
     if (i.user.id !== OWNER_ID) return i.reply({ content: 'Unauthorized.', ephemeral: true });
-    await i.reply({ content: 'KOS list updated.', ephemeral: true });
-    // Only creates list messages if not present
+    await i.reply({ content: 'KOS list created.', ephemeral: true });
     await updateSection(i.channel, 'players');
     await updateSection(i.channel, 'topPriority');
     await updateSection(i.channel, 'clans');
