@@ -50,11 +50,12 @@ function loadData() {
   data.players = new Map();
   if (raw.players) {
     raw.players.forEach(p => {
-      if (p.username) data.players.set(p.username, p);
+      // Always include players, even if username is empty
+      data.players.set(p.username || p.name, p);
     });
   }
 
-  // Load priority (map usernames to actual players if possible)
+  // Load priority
   data.priority = new Set();
   if (raw.topPriority) {
     raw.topPriority.forEach(u => {
@@ -82,21 +83,16 @@ function rev() { data.revision++; return '\u200B'.repeat((data.revision % 10) + 
 /* ===================== FORMATTERS ===================== */
 function formatPlayers() {
   const rows = [...data.players.values()]
-    .filter(p => !data.priority.has(p.username))
+    .filter(p => !data.priority.has(p.username || p.name))
     .sort((a, b) => a.name.localeCompare(b.name))
-    .map(p => `${p.name} : ${p.username || p.name}`);
+    .map(p => `${p.name} : ${p.username || 'N/A'}`);
   return rows.length ? rows.join('\n') : 'None';
 }
 
 function formatPriority() {
   const rows = [...data.priority].map(u => {
-    // Try username
-    let p = data.players.get(u);
-    if (!p) {
-      // Fallback: match by name
-      p = [...data.players.values()].find(pl => pl.name.toLowerCase() === u.toLowerCase());
-    }
-    return p ? `${p.name} : ${p.username || p.name}` : u;
+    let p = data.players.get(u) || [...data.players.values()].find(pl => pl.name.toLowerCase() === u.toLowerCase());
+    return p ? `${p.name} : ${p.username || 'N/A'}` : u;
   });
   return rows.length ? rows.join('\n') : 'None';
 }
@@ -194,7 +190,7 @@ client.on('messageCreate', async msg => {
   if (cmd === '^ka') {
     const [name, username] = args;
     if (!name || !username) {
-      const m = await msg.channel.send(`<@${msg.author.id}> Missing name.`);
+      const m = await msg.channel.send(`<@${msg.author.id}> Missing name or username.`);
       return setTimeout(() => m.delete().catch(()=>{}), 3000);
     }
     if (data.players.has(username)) {
@@ -212,11 +208,9 @@ client.on('messageCreate', async msg => {
   if (cmd === '^kr') {
     const [identifier] = args;
     if (!identifier) {
-      const m = await msg.channel.send(`<@${msg.author.id}> Player not found.`);
+      const m = await msg.channel.send(`<@${msg.author.id}> Missing player identifier.`);
       return setTimeout(() => m.delete().catch(()=>{}), 3000);
     }
-
-    // Find player by username or name
     const player = data.players.get(identifier) || [...data.players.values()].find(p => p.name.toLowerCase() === identifier.toLowerCase());
     if (!player) {
       const m = await msg.channel.send(`<@${msg.author.id}> Player not found.`);
@@ -228,11 +222,11 @@ client.on('messageCreate', async msg => {
       return setTimeout(() => m.delete().catch(()=>{}), 3000);
     }
 
-    data.players.delete(player.username);
-    data.priority.delete(player.username);
+    data.players.delete(player.username || player.name);
+    data.priority.delete(player.username || player.name);
     await updateKosList(msg.channel, 'players');
     await updateKosList(msg.channel, 'priority');
-    const m = await msg.channel.send(`<@${msg.author.id}> Removed ${player.username}`);
+    const m = await msg.channel.send(`<@${msg.author.id}> Removed ${player.username || player.name}`);
     return setTimeout(() => m.delete().catch(()=>{}), 3000);
   }
 
@@ -240,7 +234,7 @@ client.on('messageCreate', async msg => {
   if (cmd === '^kca') {
     const [name, region] = args;
     if (!name || !region) {
-      const m = await msg.channel.send(`<@${msg.author.id}> Missing name.`);
+      const m = await msg.channel.send(`<@${msg.author.id}> Missing name or region.`);
       return setTimeout(() => m.delete().catch(()=>{}), 3000);
     }
     const clan = `${region.toUpperCase()}»${name.toUpperCase()}`;
@@ -258,7 +252,7 @@ client.on('messageCreate', async msg => {
   if (cmd === '^kcr') {
     const [name, region] = args;
     if (!name || !region) {
-      const m = await msg.channel.send(`<@${msg.author.id}> Missing name.`);
+      const m = await msg.channel.send(`<@${msg.author.id}> Missing name or region.`);
       return setTimeout(() => m.delete().catch(()=>{}), 3000);
     }
     const clan = `${region.toUpperCase()}»${name.toUpperCase()}`;
@@ -279,7 +273,7 @@ client.on('messageCreate', async msg => {
     if (cmd === '^pa') {
       const [name, username] = args;
       if (!name || !username) {
-        const m = await msg.channel.send(`<@${msg.author.id}> Missing name.`);
+        const m = await msg.channel.send(`<@${msg.author.id}> Missing name or username.`);
         return setTimeout(() => m.delete().catch(()=>{}), 3000);
       }
       if (data.players.has(username)) {
@@ -301,7 +295,6 @@ client.on('messageCreate', async msg => {
       return setTimeout(() => m.delete().catch(()=>{}), 3000);
     }
 
-    // Find player
     const player = data.players.get(identifier) || [...data.players.values()].find(p => p.name.toLowerCase() === identifier.toLowerCase());
     if (!player) {
       const m = await msg.channel.send(`<@${msg.author.id}> Player not found.`);
@@ -309,14 +302,14 @@ client.on('messageCreate', async msg => {
     }
 
     if (cmd === '^p') {
-      data.priority.add(player.username);
+      data.priority.add(player.username || player.name);
       await updateKosList(msg.channel, 'priority');
-      const m = await msg.channel.send(`<@${msg.author.id}> Promoted ${player.username} to priority`);
+      const m = await msg.channel.send(`<@${msg.author.id}> Promoted ${player.username || player.name} to priority`);
       return setTimeout(() => m.delete().catch(()=>{}), 3000);
     } else if (cmd === '^pr') {
-      data.priority.delete(player.username);
+      data.priority.delete(player.username || player.name);
       await updateKosList(msg.channel, 'priority');
-      const m = await msg.channel.send(`<@${msg.author.id}> Removed ${player.username} from priority`);
+      const m = await msg.channel.send(`<@${msg.author.id}> Removed ${player.username || player.name} from priority`);
       return setTimeout(() => m.delete().catch(()=>{}), 3000);
     }
   }
@@ -326,11 +319,17 @@ client.on('messageCreate', async msg => {
 client.on('interactionCreate', async i => {
   if (!i.isChatInputCommand()) return;
 
+  if (i.user.id !== OWNER_ID) {
+    return i.reply({ content: 'Only the owner can use this command.', ephemeral: true });
+  }
+
   await i.deferReply({ ephemeral: true });
+
   if (i.commandName === 'panel') {
     await updatePanel(i.channel);
     await i.editReply({ content: 'Panel updated.' });
   }
+
   if (i.commandName === 'list') {
     await updateKosList(i.channel);
     await i.editReply({ content: 'KOS list created.' });
