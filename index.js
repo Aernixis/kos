@@ -29,7 +29,6 @@ let data = {
 // ---------------- LOAD / SAVE ----------------
 function loadData() {
   if (!fs.existsSync(DATA_FILE)) return;
-
   try {
     const oldData = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
 
@@ -102,6 +101,8 @@ let listUpdating = false;
 
 async function updateKosList(channel) {
   if (!channel || listUpdating) return;
+  if (!data.listData.channelId) return;
+
   listUpdating = true;
 
   const sections = [
@@ -111,22 +112,12 @@ async function updateKosList(channel) {
   ];
 
   for (const section of sections) {
+    if (!section.key || !data.listData[section.key]) continue; // Only edit existing messages
     try {
+      const msg = await channel.messages.fetch(data.listData[section.key]).catch(() => null);
+      if (!msg) continue;
       const formatted = '```' + section.title + '\n' + section.content + '\n```';
-      let msg;
-
-      if (section.key && data.listData[section.key]) {
-        msg = await channel.messages.fetch(data.listData[section.key]).catch(() => null);
-        if (msg) {
-          if (msg.content !== formatted) await msg.edit({ content: formatted });
-          continue; // Skip sending new message
-        }
-      }
-
-      // Only send if there is no existing message
-      msg = await channel.send({ content: formatted });
-      if (section.key) data.listData[section.key] = msg.id;
-
+      if (msg.content !== formatted) await msg.edit({ content: formatted });
     } catch(e) {
       console.error('KOS update error', e);
     }
@@ -148,17 +139,36 @@ async function updatePanel(channel) {
     .setColor(0xFF0000);
 
   const tutorialText = `
+KOS Submission System
 This bot organizes LBG players and clans onto the KOS list for YX members.
 
 Players
-To add players, use ^kos add or ^ka
-To remove players, use ^kos remove or ^kr
+To add players, use the command ^kos add or ^ka
+When adding players, place the name before the username
+Example:
+^kos add poison poisonrebuild
+^ka poison poisonrebuild
+To remove players, use the command ^kos remove or ^kr
+Removing players follows the same format as adding them
+Example:
+^kos remove poison poisonrebuild
+^kr poison poisonrebuild
 
 Clans
-To add clans, use ^kos clan add or ^kca
-To remove clans, use ^kos clan remove or ^kcr
+To add clans, use the command ^kos clan add or ^kca
+When adding clans, place the name before the region and use the short region code
+Example:
+^kos clan add yx eu
+^kca yx eu
+To remove clans, use the command ^kos clan remove or ^kcr
+Removing clans follows the same format as adding them
+Example:
+^kos clan remove yx eu
+^kcr yx eu
 
 Thank you for being a part of YX!
+
+
 `;
 
   const infoEmbed = new EmbedBuilder()
@@ -291,9 +301,15 @@ client.on('messageCreate', async msg => {
   if (!changed) return;
 
   saveData();
-  updateKosList(msg.channel).catch(console.error);
 
-  if (actionText) {
+  // Edit KOS list messages without sending new ones
+  if (data.listData.channelId) {
+    const listChannel = msg.guild.channels.cache.get(data.listData.channelId);
+    if (listChannel) updateKosList(listChannel).catch(console.error);
+  }
+
+  // Send confirmation
+  if (actionText){
     const botMsg = await msg.channel.send(`<@${msg.author.id}> ${actionText}`);
     setTimeout(()=>{ botMsg.delete().catch(()=>{}); msg.delete().catch(()=>{}); },3000);
   }
