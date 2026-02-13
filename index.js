@@ -80,9 +80,7 @@ function buildList() {
 
   out.push("–––––– PRIORITY ––––––");
   if (!data.priority.length) out.push("None");
-  else {
-    data.priority.sort().forEach(p => out.push(p)); // never N/A
-  }
+  else data.priority.sort().forEach(p => out.push(p));
 
   out.push("–––––– CLANS ––––––");
   if (!data.clans.length) out.push("None");
@@ -100,24 +98,23 @@ client.on("messageCreate", async msg => {
 
   const args = msg.content.slice(1).trim().split(/\s+/);
   const cmd = args.shift()?.toLowerCase();
+  const kosCommands = ["ka","kr","p","pa","pr","kca","kcr"];
   let changed = false;
 
-  // Submission channel check
-  if (data.listData.channelId && msg.channel.id !== data.listData.channelId) {
-    if (["ka","kr","p","pa","pr","kca","kcr"].includes(cmd)) {
-      try {
-        const botMsg = await msg.channel.send(`Use KOS commands in <#${data.listData.channelId}>.`);
-        setTimeout(() => { botMsg.delete().catch(()=>{}); msg.delete().catch(()=>{}); }, 3000);
-      } catch {}
-      return;
-    }
+  // ✅ Submission channel check first
+  if (data.listData.channelId && kosCommands.includes(cmd) && msg.channel.id !== data.listData.channelId) {
+    try {
+      const botMsg = await msg.channel.send(`Use KOS commands in <#${data.listData.channelId}>.`);
+      setTimeout(() => { botMsg.delete().catch(()=>{}); msg.delete().catch(()=>{}); }, 3000);
+    } catch {}
+    return; // stop processing entirely if wrong channel
   }
 
   /* ---- PLAYER ADD ---- */
   if (cmd === "ka") {
     const name = args.shift();
     const username = args.shift() || null;
-    if (!name) return;
+    if (!name || !username) return;
     if (!data.players.some(p => p.name === name && p.username === username)) {
       data.players.push({ name, username });
       changed = true;
@@ -132,7 +129,6 @@ client.on("messageCreate", async msg => {
     const before = data.players.length;
     data.players = data.players.filter(p => !(p.name === name && (username ? p.username === username : true)));
     if (before !== data.players.length) changed = true;
-    // also remove from priority if present
     data.priority = data.priority.filter(p => p !== name);
   }
 
@@ -174,6 +170,7 @@ client.on("messageCreate", async msg => {
   if (!changed) return; // nothing changed
 
   saveData();
+  // ❌ Removed KOS list update message
 });
 
 /* =========================
@@ -196,7 +193,6 @@ client.on("interactionCreate", async interaction => {
   }
 
   if (commandName === "submission") {
-    // store the submission channel ID
     data.listData.channelId = channel.id;
     saveData();
     await interaction.reply({ content: "Submission channel set! Prefix commands will only work here.", ephemeral: true });
