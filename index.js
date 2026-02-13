@@ -105,16 +105,22 @@ async function updateKosList(channel) {
       try {
         let msg;
         const formatted = '```' + section.title + '\n' + section.content + '\n```';
+
         if (section.key && data.listData[section.key]) {
-          msg = await channel.messages.fetch(data.listData[section.key]).catch(()=>null);
-          if (msg) {
-            if (msg.content !== formatted) await msg.edit({ content: formatted });
-            continue;
-          }
+          msg = await channel.messages.fetch(data.listData[section.key]).catch(() => null);
         }
-        msg = await channel.send({ content: formatted });
-        if (section.key) data.listData[section.key] = msg.id;
-      } catch(e){ console.error('KOS update error', e); }
+
+        if (msg) {
+          // Always edit to refresh visually
+          await msg.edit({ content: formatted });
+        } else {
+          msg = await channel.send({ content: formatted });
+          if (section.key) data.listData[section.key] = msg.id;
+        }
+
+      } catch (e) {
+        console.error('KOS update error', e);
+      }
     }
 
     saveData();
@@ -215,16 +221,13 @@ client.on('messageCreate', async msg => {
     saveData();
     const botMsg = await msg.channel.send(`KOS submission channel set to this channel: <#${msg.channel.id}>`);
     setTimeout(()=>botMsg.delete().catch(()=>{}), 5000);
-    msg.delete().catch(()=>{});
-    return;
+    return msg.delete().catch(()=>{});
   }
 
   const allowedCmds = ['^ka','^kr','^p','^pa','^pr','^kca','^kcr'];
-  // Submission channel check
   if (allowedCmds.includes(cmd) && data.listData.channelId && msg.channel.id !== data.listData.channelId) {
-    const botMsg = await msg.channel.send(`Use KOS messages in <#${data.listData.channelId}>.`);
-    setTimeout(()=>{ botMsg.delete().catch(()=>{}); msg.delete().catch(()=>{}); },3000);
-    return;
+    await msg.channel.send(`Use KOS messages in <#${data.listData.channelId}>.`);
+    return msg.delete().catch(()=>{});
   }
 
   let changed = false;
@@ -274,9 +277,8 @@ client.on('messageCreate', async msg => {
     const name = args.join(' ');
     if (!name) return;
     if (!canUsePriority(msg)) {
-      const botMsg = await msg.channel.send(`<@${msg.author.id}> You don't have permission to use this command.`);
-      setTimeout(()=>{ botMsg.delete().catch(()=>{}); msg.delete().catch(()=>{}); },3000);
-      return;
+      await msg.channel.send(`<@${msg.author.id}> You don't have permission to use this command.`);
+      return msg.delete().catch(()=>{});
     }
     if (!data.priority.includes(name)) { data.priority.push(name); changed=true; actionText=`Added ${name} to priority`; }
   }
@@ -284,9 +286,8 @@ client.on('messageCreate', async msg => {
     const name = args.join(' ');
     if (!name) return;
     if (!canUsePriority(msg)) {
-      const botMsg = await msg.channel.send(`<@${msg.author.id}> You don't have permission to use this command.`);
-      setTimeout(()=>{ botMsg.delete().catch(()=>{}); msg.delete().catch(()=>{}); },3000);
-      return;
+      await msg.channel.send(`<@${msg.author.id}> You don't have permission to use this command.`);
+      return msg.delete().catch(()=>{});
     }
     const before = data.priority.length;
     data.priority = data.priority.filter(p=>p!==name);
@@ -297,14 +298,15 @@ client.on('messageCreate', async msg => {
 
   saveData();
 
-  // Always update list in the submission channel
+  // Update list in submission channel
   const listChannel = client.channels.cache.get(data.listData.channelId);
   if (listChannel) updateKosList(listChannel).catch(console.error);
 
-  // Send single confirmation
+  // SINGLE CONFIRMATION REPLY
   if (actionText){
     const botMsg = await msg.channel.send(`<@${msg.author.id}> ${actionText}`);
-    setTimeout(()=>{ botMsg.delete().catch(()=>{}); msg.delete().catch(()=>{}); },3000);
+    setTimeout(()=>botMsg.delete().catch(()=>{}), 3000);
+    msg.delete().catch(()=>{});
   }
 });
 
