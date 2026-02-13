@@ -240,8 +240,7 @@ client.on('messageCreate', async msg => {
     if (cmd === '^ka') {
         const name = p[1], username = p[2];
         if (!name || !username) return sendReplyOnce('Name and username required.');
-        if (kosData.players.some(x => x.username.toLowerCase() === username.toLowerCase()))
-            return sendReplyOnce('Username already exists. Each player must have a unique username.');
+        if (kosData.players.some(x => norm(x.name) === norm(name))) return sendReplyOnce('Player already exists.');
         kosData.players.push({ name, username, addedBy: msg.author.id });
         saveData(); updateList();
         return sendReplyOnce(`Added ${name}`);
@@ -270,8 +269,6 @@ client.on('messageCreate', async msg => {
             const username = p[2];
             const exists = kosData.players.some(x => norm(x.name) === key);
             if (!exists) {
-                if (username && kosData.players.some(x => x.username.toLowerCase() === username.toLowerCase()))
-                    return sendReplyOnce('Username already exists. Each player must have a unique username.');
                 kosData.players.push({ name, username: username || 'N/A', addedBy: msg.author.id });
                 kosData.topPriority.push(key);
                 saveData(); updateList();
