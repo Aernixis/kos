@@ -46,17 +46,16 @@ function loadData() {
 
   const raw = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
 
-  // Load players
+  // Load players, keep original usernames (even missing)
   data.players = new Map();
   if (raw.players) {
     raw.players.forEach(p => {
-      const username = p.username || `N/A`;
-      data.players.set(username, { ...p, username });
+      data.players.set(p.username || p.name, { ...p });
     });
   }
 
-  // Load priority
-  data.priority = new Set(raw.topPriority || []);
+  // Load priority, only keep usernames that exist in players
+  data.priority = new Set((raw.topPriority || []).filter(u => data.players.has(u)));
 
   // Load clans
   data.clans = new Set(raw.clans || []);
@@ -66,7 +65,7 @@ function loadData() {
   data.panelMessages = raw.panelMessages || data.panelMessages;
   data.revision = raw.revision || 0;
 }
-loadData(); // Only loads at startup
+loadData();
 
 /* ===================== HELPERS ===================== */
 function canUsePriority(msg) {
@@ -78,7 +77,7 @@ function rev() { data.revision++; return '\u200B'.repeat((data.revision % 10) + 
 /* ===================== FORMATTERS ===================== */
 function formatPlayers() {
   const rows = [...data.players.values()]
-    .filter(p => !data.priority.has(p.username))
+    .filter(p => !data.priority.has(p.username)) 
     .sort((a, b) => a.name.localeCompare(b.name))
     .map(p => `${p.name} : ${p.username || 'N/A'}`);
   return rows.length ? rows.join('\n') : 'None';
@@ -86,9 +85,10 @@ function formatPlayers() {
 
 function formatPriority() {
   const rows = [...data.priority].map(u => {
-    let p = data.players.get(u) || [...data.players.values()].find(pl => pl.name.toLowerCase() === u.toLowerCase());
-    return p ? `${p.name} : ${p.username || 'N/A'}` : u;
-  });
+    const p = data.players.get(u);
+    if (!p || !p.username) return null; // skip missing usernames
+    return `${p.name} : ${p.username}`;
+  }).filter(Boolean);
   return rows.length ? rows.join('\n') : 'None';
 }
 
@@ -253,6 +253,7 @@ client.on('messageCreate', async msg => {
     if (!identifier) return tempReply('Missing name.');
     const player = data.players.get(identifier) || [...data.players.values()].find(p => p.name.toLowerCase() === identifier.toLowerCase());
     if (!player) return tempReply('Missing name.');
+    if (!player.username) return tempReply('Missing name.'); // Ensure no N/A in priority
 
     if (cmd === '^p') {
       data.priority.add(player.username);
