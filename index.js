@@ -101,21 +101,21 @@ async function updateKosList(channel) {
       { key: 'clansMessageId', title: '–––––– CLANS ––––––', content: formatClans() }
     ];
 
-    for (const section of sections) {
+    await Promise.all(sections.map(async section => {
+      const formatted = '```' + section.title + '\n' + section.content + '\n```';
       try {
         let msg;
-        const formatted = '```' + section.title + '\n' + section.content + '\n```';
         if (section.key && data.listData[section.key]) {
           msg = await channel.messages.fetch(data.listData[section.key]).catch(()=>null);
           if (msg) {
             if (msg.content !== formatted) await msg.edit({ content: formatted });
-            continue;
+            return;
           }
         }
         msg = await channel.send({ content: formatted });
         if (section.key) data.listData[section.key] = msg.id;
       } catch(e){ console.error('KOS update error', e); }
-    }
+    }));
 
     saveData();
     listUpdating = false;
@@ -303,16 +303,27 @@ client.on('interactionCreate', async i => {
   if (!i.isChatInputCommand()) return;
 
   try {
-    if (i.commandName === 'panel') {
-      await updatePanel(i.channel);
-      await i.reply({ content: 'Panel updated.', ephemeral: true });
+    if (i.commandName === 'submission') {
+      data.listData.channelId = i.channel.id;
+      saveData();
+      await i.reply({ content: `This channel is now the KOS submission channel. Prefix commands must be used here.`, ephemeral: true });
     }
 
     if (i.commandName === 'list') {
-      await updateKosList(i.channel);
-      await i.reply({ content: 'KOS list updated.', ephemeral: true });
+      await i.reply({ content: 'Updating KOS list…', ephemeral: true });
+      updateKosList(i.channel).catch(console.error);
+      await i.editReply({ content: 'KOS list updated.' });
     }
-  } catch(e) { console.error('Slash command error', e); }
+
+    if (i.commandName === 'panel') {
+      await i.reply({ content: 'Updating submission panel…', ephemeral: true });
+      updatePanel(i.channel).catch(console.error);
+      await i.editReply({ content: 'Submission panel updated.' });
+    }
+  } catch(e) {
+    console.error('Slash command error', e);
+    if (!i.replied) await i.reply({ content: 'There was an error executing this command.', ephemeral: true });
+  }
 });
 
 // ---------------- LOGIN ----------------
