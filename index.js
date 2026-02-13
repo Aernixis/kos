@@ -31,7 +31,7 @@ let kosData = {
     }
 };
 
-// Load data
+// Load existing data
 if (fs.existsSync(DATA_FILE)) {
     try { kosData = JSON.parse(fs.readFileSync(DATA_FILE)); }
     catch { console.error('Failed to load data.json'); }
@@ -92,7 +92,10 @@ async function updateKosList(channel) {
         try {
             if (id) {
                 const msg = await channel.messages.fetch(id).catch(()=>null);
-                if (msg) return (await msg.edit({ content }))?.id;
+                if (msg) {
+                    await msg.edit({ content });
+                    return msg.id;
+                }
             }
         } catch {}
         const msg = await channel.send({ content });
@@ -197,7 +200,6 @@ client.on('messageCreate', async msg => {
 
     let handled = false;
 
-    // --- REPLY FUNCTION WITH SYNCHRONIZED DELETION ---
     async function sendReplyOnce(text) {
         if (handled) return;
         handled = true;
@@ -210,7 +212,6 @@ client.on('messageCreate', async msg => {
         } catch {}
     }
 
-    // --- UPDATE LIST ---
     async function updateList() {
         if (kosData.listData.channelId) {
             const ch = await client.channels.fetch(kosData.listData.channelId).catch(()=>null);
@@ -218,15 +219,15 @@ client.on('messageCreate', async msg => {
         }
     }
 
-    // enforce KOS channel
+    // ---------------- ENFORCE KOS CHANNEL ----------------
     if (kosData.listData.channelId && msg.channel.id !== kosData.listData.channelId) {
         if (['^ka','^kr','^pa','^p','^pr','^kca','^kcr'].includes(cmd)) {
-            return sendReplyOnce('Use KOS commands in the KOS channel.');
+            const subChannelMention = `<#${kosData.listData.channelId}>`;
+            return sendReplyOnce(`Use KOS commands in ${subChannelMention}.`);
         }
     }
 
-    // --- PLAYER AND CLAN COMMANDS ---
-    // ADD PLAYER
+    // ---------------- PLAYER COMMANDS ----------------
     if (cmd === '^ka') {
         const name = p[1], username = p[2];
         if (!name || !username) return sendReplyOnce('Name and username required.');
@@ -236,7 +237,6 @@ client.on('messageCreate', async msg => {
         return sendReplyOnce(`Added ${name}`);
     }
 
-    // REMOVE PLAYER
     if (cmd === '^kr') {
         const name = p[1];
         if (!name) return sendReplyOnce('Name required.');
@@ -250,7 +250,6 @@ client.on('messageCreate', async msg => {
         return sendReplyOnce(`Removed ${name}`);
     }
 
-    // PRIORITY
     if (['^pa','^p','^pr'].includes(cmd)) {
         if (!canUsePriority(msg)) return sendReplyOnce('You are not allowed to use priority commands.');
         const name = p[1];
@@ -285,7 +284,7 @@ client.on('messageCreate', async msg => {
         }
     }
 
-    // ADD CLAN
+    // ---------------- CLAN COMMANDS ----------------
     if (cmd === '^kca') {
         const name = p[1], region = p[2];
         if (!name || !region) return sendReplyOnce('Clan name and region required.');
@@ -296,7 +295,6 @@ client.on('messageCreate', async msg => {
         return sendReplyOnce(`Added clan ${clanStr}`);
     }
 
-    // REMOVE CLAN
     if (cmd === '^kcr') {
         const name = p[1], region = p[2];
         if (!name || !region) return sendReplyOnce('Clan name and region required.');
