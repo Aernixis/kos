@@ -319,23 +319,18 @@ client.on('interactionCreate', async i => {
 
     // ---------------- SUBMISSION ----------------
     if (i.commandName === 'submission') {
-      // Check if submission channel is set
-      if (!data.listData.channelId) {
-        await i.reply({ content: 'Submission channel not set.', ephemeral: true });
+      // Only the owner can set the submission channel
+      if (i.user.id !== OWNER_ID) {
+        await i.reply({ content: `Only the bot owner can set the submission channel.` });
         return;
       }
 
-      // Check if used in the correct channel
-      if (i.channel.id !== data.listData.channelId) {
-        await i.reply({
-          content: `KOS commands must be used in <#${data.listData.channelId}>.`
-        });
-        return;
-      }
+      // Set this channel as the submission channel
+      data.listData.channelId = i.channel.id;
+      saveData();
 
-      // If used in the correct channel, just confirm publicly
       await i.reply({
-        content: 'You are in the correct submission channel.'
+        content: `This channel (<#${i.channel.id}>) has been set as the submission channel.`
       });
     }
   } catch (e) {
@@ -346,3 +341,4 @@ client.on('interactionCreate', async i => {
 
 // ---------------- LOGIN ----------------
 client.login(process.env.TOKEN);
+
