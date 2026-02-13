@@ -211,11 +211,10 @@ client.on('messageCreate', async msg => {
     else cmd = '^p';
   }
 
-  // ---------------- PUBLIC CHANNEL CHECK ----------------
+  // Submission channel check
   if (data.listData.channelId && msg.channel.id !== data.listData.channelId) {
     if (['^ka','^kr','^p','^pa','^pr','^kca','^kcr'].includes(cmd)) {
-      // Public reply, command is ignored
-      const botMsg = await msg.channel.send(`KOS commands must be used in <#${data.listData.channelId}>.`);
+      const botMsg = await msg.channel.send(`Use KOS commands in <#${data.listData.channelId}>.`);
       setTimeout(()=>{ botMsg.delete().catch(()=>{}); msg.delete().catch(()=>{}); },3000);
       return;
     }
@@ -304,43 +303,32 @@ client.on('interactionCreate', async i => {
   if (!i.isChatInputCommand()) return;
 
   try {
-    // ---------------- PANEL ----------------
     if (i.commandName === 'panel') {
       await updatePanel(i.channel);
       await i.reply({ content: 'Panel updated.', ephemeral: true });
-      return;
     }
 
-    // ---------------- LIST ----------------
     if (i.commandName === 'list') {
       await updateKosList(i.channel);
       await i.reply({ content: 'KOS list updated.', ephemeral: true });
-      return;
     }
 
-    // ---------------- SUBMISSION ----------------
     if (i.commandName === 'submission') {
-      // Only the owner can set the submission channel
-      if (i.user.id !== OWNER_ID) {
-        await i.reply({ content: `Only the bot owner can set the submission channel.`, ephemeral: true });
-        return;
-      }
-
-      // Set this channel as the submission channel
-      data.listData.channelId = i.channel.id;
+      data.listData.channelId = i.channelId;
       saveData();
-
-      // Ephemeral reply to owner
-      await i.reply({
-        content: `This channel (<#${i.channel.id}>) has been set as the submission channel.`,
-        ephemeral: true
-      });
+      if (!i.replied && !i.deferred) {
+        await i.reply({ content: `Submission channel set to <#${i.channelId}>`, ephemeral: true });
+      }
     }
   } catch (e) {
-    console.error('Slash command error', e);
-    if (!i.replied) await i.reply({ content: 'An error occurred.', ephemeral: true });
+    console.error('Slash command error:', e);
+    if (!i.replied && !i.deferred) {
+      await i.reply({ content: 'Error occurred.', ephemeral: true }).catch(() => {});
+    }
   }
 });
+
+
 
 // ---------------- LOGIN ----------------
 client.login(process.env.TOKEN);
