@@ -66,7 +66,6 @@ function formatPlayers() {
 }
 
 function formatPriority() {
-  // ✅ Show all usernames in topPriority even if player isn't in players
   return data.topPriority.length ? data.topPriority.join('\n') : 'None';
 }
 
@@ -77,6 +76,7 @@ function formatClans() {
 /* ===================== LIST UPDATER ===================== */
 async function updateSection(channel, section) {
   if (!channel) return;
+
   let content = '';
   let messageId = null;
 
