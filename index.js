@@ -153,30 +153,16 @@ async function updatePanel(channel) {
 This bot organizes LBG players and clans onto the KOS list for YX members.
 
 Players
-To add players, use the command ^kos add or ^ka
-When adding players, place the name before the username
-Example:
-^kos add poison poisonrebuild
-^ka poison poisonrebuild
-To remove players, use the command ^kos remove or ^kr
-Removing players follows the same format as adding them
-Example:
-^kos remove poison poisonrebuild
-^kr poison poisonrebuild
+^ka name username → Add player
+^kr name [username] → Remove player
+
+Priority
+^p name → Add to priority
+^pr name → Remove from priority
 
 Clans
-To add clans, use the command ^kos clan add or ^kca
-When adding clans, place the name before the region and use the short region code
-Example:
-^kos clan add yx eu
-^kca yx eu
-To remove clans, use the command ^kos clan remove or ^kcr
-Removing clans follows the same format as adding them
-Example:
-^kos clan remove yx eu
-^kcr yx eu
-
-Thank you for being a part of YX!
+^kca clan → Add clan
+^kcr clan → Remove clan
   `;
 
   const infoEmbed = new EmbedBuilder()
@@ -209,29 +195,24 @@ client.on('messageCreate', async msg => {
 
   const args = msg.content.trim().split(/\s+/);
   const cmd = args.shift().toLowerCase();
-
   const kosCommands = ['^ka','^kr','^p','^pa','^pr','^kca','^kcr'];
-  let changed = false;
 
-  // Only one reply in case of error
-  const replyOnce = async (text) => {
-    try {
-      const botMsg = await msg.channel.send(`<@${msg.author.id}> ${text}`);
-      setTimeout(()=>{ botMsg.delete().catch(()=>{}); msg.delete().catch(()=>{}); }, 3000);
-    } catch {}
-  };
+  let changed = false;
+  let actionText = '';
 
   // Submission channel check
   if (data.listData.channelId && msg.channel.id !== data.listData.channelId && kosCommands.includes(cmd)) {
-    return replyOnce(`Use KOS commands in <#${data.listData.channelId}>.`);
+    try {
+      const botMsg = await msg.channel.send(`<@${msg.author.id}> Use KOS commands in <#${data.listData.channelId}>.`);
+      setTimeout(()=>{ botMsg.delete().catch(()=>{}); msg.delete().catch(()=>{}); }, 3000);
+    } catch {}
+    return;
   }
 
-  let actionText = '';
-
-  // Player add
+  // -------- PLAYER COMMANDS --------
   if (cmd === '^ka') {
     const name = args.shift(), username = args.shift();
-    if (!name || !username) return replyOnce('Name and username required.');
+    if (!name || !username) return;
     if (!data.players.some(p => p.name === name && p.username === username)) {
       data.players.push({ name, username, addedBy: msg.author.id });
       changed = true;
@@ -239,43 +220,40 @@ client.on('messageCreate', async msg => {
     }
   }
 
-  // Player remove
   if (cmd === '^kr') {
     const name = args.shift(), username = args.shift() || null;
-    if (!name) return replyOnce('Name required.');
+    if (!name) return;
     const before = data.players.length;
     data.players = data.players.filter(p => !(p.name === name && (username ? p.username === username : true)));
-    if (before !== data.players.length) changed = true;
     data.priority = data.priority.filter(p => p !== name);
-    if (before !== data.players.length) actionText = `Removed ${name}` + (username ? ` : ${username}` : '');
+    if (before !== data.players.length) {
+      changed = true;
+      actionText = `Removed ${name}` + (username ? ` : ${username}` : '');
+    }
   }
 
-  // Priority add
+  // -------- PRIORITY COMMANDS --------
   if (['^p','^pa'].includes(cmd)) {
     const name = args.join(' ');
-    if (!name) return replyOnce('Name required.');
-    if (!canUsePriority(msg)) return replyOnce('You cannot use priority commands.');
+    if (!name || !canUsePriority(msg)) return;
     if (!data.priority.includes(name)) { data.priority.push(name); changed = true; actionText = `Added ${name} to priority`; }
   }
 
-  // Priority remove
   if (cmd === '^pr') {
     const name = args.join(' ');
-    if (!name) return replyOnce('Name required.');
-    if (!canUsePriority(msg)) return replyOnce('You cannot use priority commands.');
+    if (!name || !canUsePriority(msg)) return;
     const before = data.priority.length;
     data.priority = data.priority.filter(p => p !== name);
     if (before !== data.priority.length) { changed = true; actionText = `Removed ${name} from priority`; }
   }
 
-  // Clan add
+  // -------- CLAN COMMANDS --------
   if (cmd === '^kca') {
     const clan = args.join(' ');
-    if (!clan) return replyOnce('Clan name required.');
+    if (!clan) return;
     if (!data.clans.includes(clan)) { data.clans.push(clan); changed = true; actionText = `Added clan ${clan}`; }
   }
 
-  // Clan remove
   if (cmd === '^kcr') {
     const clan = args.join(' ');
     const before = data.clans.length;
@@ -286,9 +264,8 @@ client.on('messageCreate', async msg => {
   if (!changed) return;
 
   saveData();
-  updateKosList(msg.channel).catch(console.error);
+  await updateKosList(msg.channel).catch(console.error);
 
-  // Send one confirmation message and delete both after 3 seconds
   if (actionText) {
     try {
       const botMsg = await msg.channel.send(`<@${msg.author.id}> ${actionText}`);
@@ -308,7 +285,7 @@ client.on('interactionCreate', async i => {
       data.listData.channelId = i.channelId;
       saveData();
     }
-    // ❌ No ephemeral messages anymore
+    // ❌ No ephemeral messages
   } catch (e) {
     console.error('Slash command error:', e);
   }
