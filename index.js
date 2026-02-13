@@ -18,33 +18,55 @@ let data = {
   clans: []
 };
 
-/* =========================
-   LOAD + MIGRATE DATA
-========================= */
+// ---------------- ASYNC SAVE QUEUE ----------------
+let saving = false;
+let saveQueued = false;
 
-function load() {
+async function save() {
+  if (saving) {
+    saveQueued = true;
+    return;
+  }
+  saving = true;
+  try {
+    await fs.promises.writeFile(DATA_FILE, JSON.stringify(data, null, 2));
+  } catch (e) {
+    console.error("Failed to save data:", e);
+  }
+  saving = false;
+  if (saveQueued) {
+    saveQueued = false;
+    save();
+  }
+}
+
+// ---------------- LOAD + MIGRATION ----------------
+async function load() {
   if (fs.existsSync(DATA_FILE)) {
-    data = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
+    try {
+      data = JSON.parse(await fs.promises.readFile(DATA_FILE, "utf8"));
+    } catch {
+      console.error("Failed to load data.json");
+    }
   }
 
-  /* ---- MIGRATE PRIORITY ---- */
+  // Migrate topPriority if exists
   if (Array.isArray(data.topPriority) && data.topPriority.length > 0) {
     data.priority = [...new Set(data.topPriority.map(p => String(p).trim()))];
     delete data.topPriority;
   }
 
   if (!Array.isArray(data.priority)) data.priority = [];
-
-  /* ---- NORMALIZE PLAYERS ---- */
   if (!Array.isArray(data.players)) data.players = [];
+  if (!Array.isArray(data.clans)) data.clans = [];
+
+  // Normalize players
   data.players = data.players.map(p => ({
     name: String(p.name || p).trim(),
     username: p.username ? String(p.username).trim() : null
   }));
 
-  /* ---- NORMALIZE CLANS ---- */
-  if (!Array.isArray(data.clans)) data.clans = [];
-
+  // Normalize clans
   data.clans = [...new Set(
     data.clans
       .map(c => {
@@ -56,17 +78,10 @@ function load() {
       .filter(Boolean)
   )];
 
-  save();
+  await save();
 }
 
-function save() {
-  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
-}
-
-/* =========================
-   LIST BUILDER
-========================= */
-
+// ---------------- LIST BUILDER ----------------
 function buildList() {
   const out = [];
 
@@ -75,9 +90,7 @@ function buildList() {
   else {
     data.players
       .sort((a, b) => a.name.localeCompare(b.name))
-      .forEach(p => {
-        out.push(p.username ? `${p.name} : ${p.username}` : p.name);
-      });
+      .forEach(p => out.push(p.username ? `${p.name} : ${p.username}` : p.name));
   }
 
   out.push("–––––– PRIORITY ––––––");
@@ -91,10 +104,7 @@ function buildList() {
   return "```" + out.join("\n") + "```";
 }
 
-/* =========================
-   COMMAND HANDLER
-========================= */
-
+// ---------------- COMMAND HANDLER ----------------
 client.on("messageCreate", async msg => {
   if (msg.author.bot) return;
   if (!msg.content.startsWith("^")) return;
@@ -116,9 +126,7 @@ client.on("messageCreate", async msg => {
     const name = args.shift();
     const username = args.shift() || null;
     const before = data.players.length;
-    data.players = data.players.filter(
-      p => !(p.name === name && p.username === username)
-    );
+    data.players = data.players.filter(p => !(p.name === name && p.username === username));
     if (before !== data.players.length) changed = true;
   }
 
@@ -154,17 +162,14 @@ client.on("messageCreate", async msg => {
 
   if (!changed) return;
 
-  save();
+  await save();
   await msg.reply("KOS list updated.\n" + buildList());
 });
 
-/* =========================
-   STARTUP
-========================= */
-
-client.once("ready", () => {
+// ---------------- STARTUP ----------------
+client.once("ready", async () => {
   console.log(`Logged in as ${client.user.tag}`);
-  load();
+  await load();
 });
 
 client.login(process.env.TOKEN);
