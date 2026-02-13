@@ -18,29 +18,20 @@ let data = {
   clans: []
 };
 
-// ---------------- ASYNC SAVE QUEUE ----------------
-let saving = false;
-let saveQueued = false;
-
-async function save() {
-  if (saving) {
-    saveQueued = true;
-    return;
-  }
-  saving = true;
-  try {
-    await fs.promises.writeFile(DATA_FILE, JSON.stringify(data, null, 2));
-  } catch (e) {
-    console.error("Failed to save data:", e);
-  }
-  saving = false;
-  if (saveQueued) {
-    saveQueued = false;
-    save();
-  }
+// ---------- DEBOUNCED SAVE ----------
+let saveTimer = null;
+function save() {
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(async () => {
+    try {
+      await fs.promises.writeFile(DATA_FILE, JSON.stringify(data, null, 2));
+    } catch (e) {
+      console.error("Failed to save data:", e);
+    }
+  }, 50); // 50ms delay to batch writes
 }
 
-// ---------------- LOAD + MIGRATION ----------------
+// ---------- LOAD DATA ----------
 async function load() {
   if (fs.existsSync(DATA_FILE)) {
     try {
@@ -50,48 +41,35 @@ async function load() {
     }
   }
 
-  // Migrate topPriority if exists
-  if (Array.isArray(data.topPriority) && data.topPriority.length > 0) {
+  if (Array.isArray(data.topPriority) && data.topPriority.length) {
     data.priority = [...new Set(data.topPriority.map(p => String(p).trim()))];
     delete data.topPriority;
   }
 
-  if (!Array.isArray(data.priority)) data.priority = [];
-  if (!Array.isArray(data.players)) data.players = [];
-  if (!Array.isArray(data.clans)) data.clans = [];
-
-  // Normalize players
-  data.players = data.players.map(p => ({
+  data.players = Array.isArray(data.players) ? data.players.map(p => ({
     name: String(p.name || p).trim(),
     username: p.username ? String(p.username).trim() : null
-  }));
+  })) : [];
 
-  // Normalize clans
-  data.clans = [...new Set(
-    data.clans
-      .map(c => {
-        if (typeof c === "string") return c.trim();
-        if (c?.name && c?.region) return `${c.region}»${c.name}`;
-        if (c?.name) return c.name.trim();
-        return null;
-      })
-      .filter(Boolean)
-  )];
-
-  await save();
+  data.clans = Array.isArray(data.clans) ? [...new Set(
+    data.clans.map(c => {
+      if (typeof c === "string") return c.trim();
+      if (c?.name && c?.region) return `${c.region}»${c.name}`;
+      if (c?.name) return c.name.trim();
+      return null;
+    }).filter(Boolean)
+  )] : [];
 }
 
-// ---------------- LIST BUILDER ----------------
+// ---------- BUILD LIST ----------
 function buildList() {
   const out = [];
 
   out.push("–––––– PLAYERS ––––––");
   if (!data.players.length) out.push("None");
-  else {
-    data.players
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .forEach(p => out.push(p.username ? `${p.name} : ${p.username}` : p.name));
-  }
+  else data.players
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .forEach(p => out.push(p.username ? `${p.name} : ${p.username}` : p.name));
 
   out.push("–––––– PRIORITY ––––––");
   if (!data.priority.length) out.push("None");
@@ -104,7 +82,7 @@ function buildList() {
   return "```" + out.join("\n") + "```";
 }
 
-// ---------------- COMMAND HANDLER ----------------
+// ---------- COMMAND HANDLER ----------
 client.on("messageCreate", async msg => {
   if (msg.author.bot) return;
   if (!msg.content.startsWith("^")) return;
@@ -113,6 +91,7 @@ client.on("messageCreate", async msg => {
   const cmd = args.shift()?.toLowerCase();
   let changed = false;
 
+  // --- PLAYER ADD/REMOVE ---
   if (cmd === "ka") {
     const name = args.shift();
     const username = args.shift() || null;
@@ -121,7 +100,6 @@ client.on("messageCreate", async msg => {
       changed = true;
     }
   }
-
   if (cmd === "kr") {
     const name = args.shift();
     const username = args.shift() || null;
@@ -130,6 +108,7 @@ client.on("messageCreate", async msg => {
     if (before !== data.players.length) changed = true;
   }
 
+  // --- PRIORITY ADD/REMOVE ---
   if (cmd === "p" || cmd === "pa") {
     const name = args.join(" ");
     if (name && !data.priority.includes(name)) {
@@ -137,7 +116,6 @@ client.on("messageCreate", async msg => {
       changed = true;
     }
   }
-
   if (cmd === "pr") {
     const name = args.join(" ");
     const before = data.priority.length;
@@ -145,6 +123,7 @@ client.on("messageCreate", async msg => {
     if (before !== data.priority.length) changed = true;
   }
 
+  // --- CLAN ADD/REMOVE ---
   if (cmd === "kca") {
     const clan = args.join(" ");
     if (clan && !data.clans.includes(clan)) {
@@ -152,7 +131,6 @@ client.on("messageCreate", async msg => {
       changed = true;
     }
   }
-
   if (cmd === "kcr") {
     const clan = args.join(" ");
     const before = data.clans.length;
@@ -162,11 +140,11 @@ client.on("messageCreate", async msg => {
 
   if (!changed) return;
 
-  await save();
-  await msg.reply("KOS list updated.\n" + buildList());
+  save(); // debounced save
+  msg.reply("KOS list updated.\n" + buildList()).catch(console.error);
 });
 
-// ---------------- STARTUP ----------------
+// ---------- STARTUP ----------
 client.once("ready", async () => {
   console.log(`Logged in as ${client.user.tag}`);
   await load();
