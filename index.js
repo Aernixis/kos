@@ -1,6 +1,6 @@
 require("dotenv").config();
 const fs = require("fs");
-const { Client, GatewayIntentBits } = require("discord.js");
+const { Client, GatewayIntentBits, EmbedBuilder } = require("discord.js");
 
 const client = new Client({
   intents: [
@@ -11,104 +11,184 @@ const client = new Client({
 });
 
 const DATA_FILE = "./data.json";
+const OWNER_ID = "1283217337084018749";
 
 let data = {
   players: [],
   priority: [],
-  clans: []
+  clans: [],
+  panelMessages: { gif: null, tutorial: null },
+  listMessageIds: {},
+  submissionChannelId: null
 };
 
-// ---------- DEBOUNCED SAVE ----------
-let saveTimer = null;
-function save() {
-  if (saveTimer) clearTimeout(saveTimer);
-  saveTimer = setTimeout(async () => {
-    try {
-      await fs.promises.writeFile(DATA_FILE, JSON.stringify(data, null, 2));
-    } catch (e) {
-      console.error("Failed to save data:", e);
-    }
-  }, 50); // 50ms delay to batch writes
-}
-
-// ---------- LOAD DATA ----------
-async function load() {
+// ---------------- LOAD DATA ----------------
+function load() {
   if (fs.existsSync(DATA_FILE)) {
-    try {
-      data = JSON.parse(await fs.promises.readFile(DATA_FILE, "utf8"));
-    } catch {
-      console.error("Failed to load data.json");
+    data = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
+  }
+
+  // Normalize players
+  data.players = (data.players || []).map(p => ({
+    name: String(p.name).trim(),
+    username: p.username ? String(p.username).trim() : null,
+    addedBy: p.addedBy || null
+  }));
+
+  // Normalize priority
+  data.priority = Array.isArray(data.priority) ? [...new Set(data.priority)] : [];
+
+  // Normalize clans
+  data.clans = [...new Set((data.clans || []).map(c => {
+    if (typeof c === "string") return c.trim();
+    if (c?.clan) return c.clan.trim();
+    return null;
+  }).filter(Boolean))];
+
+  save();
+}
+
+function save() {
+  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+}
+
+// ---------------- LIST BUILDER ----------------
+async function updateKosList(channel) {
+  if (!channel) return;
+
+  async function fetchOrSend(id, content) {
+    if (id) {
+      const msg = await channel.messages.fetch(id).catch(() => null);
+      if (msg) return (await msg.edit({ content }))?.id;
     }
+    const msg = await channel.send({ content });
+    return msg.id;
   }
 
-  if (Array.isArray(data.topPriority) && data.topPriority.length) {
-    data.priority = [...new Set(data.topPriority.map(p => String(p).trim()))];
-    delete data.topPriority;
+  // Players
+  const playersText = "```–––––– PLAYERS ––––––\n" +
+    (data.players.length
+      ? data.players.sort((a, b) => a.name.localeCompare(b.name))
+        .map(p => p.username ? `${p.name} : ${p.username}` : p.name)
+        .join("\n")
+      : "None") +
+    "```";
+
+  // Priority
+  const priorityText = "```–––––– PRIORITY ––––––\n" +
+    (data.priority.length
+      ? data.priority.sort().join("\n")
+      : "None") +
+    "```";
+
+  // Clans
+  const clansText = "```–––––– CLANS ––––––\n" +
+    (data.clans.length
+      ? data.clans.sort().join("\n")
+      : "None") +
+    "```";
+
+  data.listMessageIds.players = await fetchOrSend(data.listMessageIds.players, playersText);
+  data.listMessageIds.priority = await fetchOrSend(data.listMessageIds.priority, priorityText);
+  data.listMessageIds.clans = await fetchOrSend(data.listMessageIds.clans, clansText);
+
+  save();
+}
+
+// ---------------- PANEL ----------------
+let panelUpdating = false;
+async function updatePanel(channel) {
+  if (!channel || panelUpdating) return;
+  panelUpdating = true;
+
+  const gifEmbed = new EmbedBuilder()
+    .setImage("https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExc2FoODRjMmVtNmhncjkyZzY0ZGVwa2l3dzV0M3UyYmZ4bjVsZ2pnOCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/iuttaLUMRLWEgJKRHx/giphy.gif")
+    .setColor(0xff0000);
+
+  const tutorialEmbed = new EmbedBuilder()
+    .setTitle("KOS Submission System")
+    .setColor(0xff0000)
+    .setDescription(`
+This bot organizes LBG players and clans onto the KOS list for YX members.
+
+Players
+To add players, use the command ^kos add or ^ka
+When adding players, place the name before the username
+Example:
+^kos add poison poisonrebuild
+^ka poison poisonrebuild
+To remove players, use the command ^kos remove or ^kr
+Removing players follows the same format as adding them
+Example:
+^kos remove poison poisonrebuild
+^kr poison poisonrebuild
+
+Clans
+To add clans, use the command ^kos clan add or ^kca
+When adding clans, place the name before the region and use the short region code
+Example:
+^kos clan add yx eu
+^kca yx eu
+To remove clans, use the command ^kos clan remove or ^kcr
+Removing clans follows the same format as adding them
+Example:
+^kos clan remove yx eu
+^kcr yx eu
+
+Thank you for being a part of YX!
+    `);
+
+  async function fetchOrSendEmbed(id, embed) {
+    if (id) {
+      const msg = await channel.messages.fetch(id).catch(() => null);
+      if (msg) return (await msg.edit({ embeds: [embed] }))?.id;
+    }
+    const msg = await channel.send({ embeds: [embed] });
+    return msg.id;
   }
 
-  data.players = Array.isArray(data.players) ? data.players.map(p => ({
-    name: String(p.name || p).trim(),
-    username: p.username ? String(p.username).trim() : null
-  })) : [];
+  data.panelMessages.gif = await fetchOrSendEmbed(data.panelMessages.gif, gifEmbed);
+  data.panelMessages.tutorial = await fetchOrSendEmbed(data.panelMessages.tutorial, tutorialEmbed);
 
-  data.clans = Array.isArray(data.clans) ? [...new Set(
-    data.clans.map(c => {
-      if (typeof c === "string") return c.trim();
-      if (c?.name && c?.region) return `${c.region}»${c.name}`;
-      if (c?.name) return c.name.trim();
-      return null;
-    }).filter(Boolean)
-  )] : [];
+  save();
+  panelUpdating = false;
 }
 
-// ---------- BUILD LIST ----------
-function buildList() {
-  const out = [];
-
-  out.push("–––––– PLAYERS ––––––");
-  if (!data.players.length) out.push("None");
-  else data.players
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .forEach(p => out.push(p.username ? `${p.name} : ${p.username}` : p.name));
-
-  out.push("–––––– PRIORITY ––––––");
-  if (!data.priority.length) out.push("None");
-  else data.priority.sort().forEach(p => out.push(p));
-
-  out.push("–––––– CLANS ––––––");
-  if (!data.clans.length) out.push("None");
-  else data.clans.sort().forEach(c => out.push(c));
-
-  return "```" + out.join("\n") + "```";
+// ---------------- HELPER ----------------
+function canUsePrefix(msg) {
+  if (msg.author.id === OWNER_ID) return true;
+  return msg.channel.id === data.submissionChannelId;
 }
 
-// ---------- COMMAND HANDLER ----------
+// ---------------- PREFIX COMMANDS ----------------
 client.on("messageCreate", async msg => {
   if (msg.author.bot) return;
   if (!msg.content.startsWith("^")) return;
+  if (!canUsePrefix(msg)) {
+    return msg.reply(`Use KOS commands in <#${data.submissionChannelId}>`).catch(() => {});
+  }
 
   const args = msg.content.slice(1).trim().split(/\s+/);
   const cmd = args.shift()?.toLowerCase();
   let changed = false;
 
-  // --- PLAYER ADD/REMOVE ---
   if (cmd === "ka") {
     const name = args.shift();
     const username = args.shift() || null;
     if (name && !data.players.some(p => p.name === name && p.username === username)) {
-      data.players.push({ name, username });
+      data.players.push({ name, username, addedBy: msg.author.id });
       changed = true;
     }
   }
+
   if (cmd === "kr") {
     const name = args.shift();
     const username = args.shift() || null;
     const before = data.players.length;
-    data.players = data.players.filter(p => !(p.name === name && p.username === username));
+    data.players = data.players.filter(p => !(p.name === name && (username ? p.username === username : true)));
     if (before !== data.players.length) changed = true;
   }
 
-  // --- PRIORITY ADD/REMOVE ---
   if (cmd === "p" || cmd === "pa") {
     const name = args.join(" ");
     if (name && !data.priority.includes(name)) {
@@ -116,6 +196,7 @@ client.on("messageCreate", async msg => {
       changed = true;
     }
   }
+
   if (cmd === "pr") {
     const name = args.join(" ");
     const before = data.priority.length;
@@ -123,7 +204,6 @@ client.on("messageCreate", async msg => {
     if (before !== data.priority.length) changed = true;
   }
 
-  // --- CLAN ADD/REMOVE ---
   if (cmd === "kca") {
     const clan = args.join(" ");
     if (clan && !data.clans.includes(clan)) {
@@ -131,6 +211,7 @@ client.on("messageCreate", async msg => {
       changed = true;
     }
   }
+
   if (cmd === "kcr") {
     const clan = args.join(" ");
     const before = data.clans.length;
@@ -140,14 +221,45 @@ client.on("messageCreate", async msg => {
 
   if (!changed) return;
 
-  save(); // debounced save
-  msg.reply("KOS list updated.\n" + buildList()).catch(console.error);
+  save();
+  await updateKosList(msg.channel);
+  msg.reply("KOS list updated.").catch(() => {});
 });
 
-// ---------- STARTUP ----------
-client.once("ready", async () => {
+// ---------------- SLASH COMMANDS ----------------
+client.on("interactionCreate", async interaction => {
+  if (!interaction.isChatInputCommand()) return;
+
+  const { commandName, channel } = interaction;
+
+  try {
+    if (commandName === "panel") {
+      await interaction.deferReply({ ephemeral: true });
+      await updatePanel(channel);
+      await interaction.editReply("Panel updated.");
+    }
+    if (commandName === "list") {
+      await interaction.deferReply({ ephemeral: true });
+      await updateKosList(channel);
+      await interaction.editReply("KOS list updated.");
+    }
+    if (commandName === "submission") {
+      data.submissionChannelId = channel.id;
+      save();
+      await interaction.reply({ content: `Submission channel set to <#${channel.id}>`, ephemeral: true });
+    }
+  } catch (e) {
+    console.error("Slash command error:", e);
+    if (!interaction.replied && !interaction.deferred) {
+      await interaction.reply({ content: "Error occurred.", ephemeral: true }).catch(() => {});
+    }
+  }
+});
+
+// ---------------- STARTUP ----------------
+client.once("ready", () => {
   console.log(`Logged in as ${client.user.tag}`);
-  await load();
+  load();
 });
 
 client.login(process.env.TOKEN);
