@@ -50,11 +50,15 @@ function saveData() {
 
 // ---------------- HELPERS ----------------
 const norm = s => s.toLowerCase();
-let panelUpdating = false;
 let listUpdating = false;
+let panelUpdating = false;
 
-// Queue for KOS list updates to prevent doubling
+// Queue promises for safe sequential updates
 let listUpdatePromise = Promise.resolve();
+let panelUpdatePromise = Promise.resolve();
+
+// Track recent replies to prevent duplicates
+const recentReplies = new Set();
 
 function canUsePriority(msg) {
     if (msg.author.id === OWNER_ID) return true;
@@ -88,13 +92,14 @@ function formatClans() {
         .join('\n');
 }
 
-// ---------------- LIST UPDATE (QUEUE SAFE) ----------------
+// ---------------- LIST UPDATE ----------------
 async function updateKosList(channel) {
     if (!channel) return;
 
     listUpdatePromise = listUpdatePromise.then(async () => {
         if (listUpdating) return;
         listUpdating = true;
+
         kosData.listData.channelId = channel.id;
 
         async function fetchOrSend(id, content) {
@@ -141,50 +146,52 @@ ${formatClans()}
 
 // ---------------- PANEL UPDATE ----------------
 async function updatePanel(channel) {
-    if (!channel || panelUpdating) return;
-    panelUpdating = true;
+    if (!channel) return;
 
-    const gifEmbed = new EmbedBuilder()
-        .setImage('https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExc2FoODRjMmVtNmhncjkyZzY0ZGVwa2l3dzV0M3UyYmZ4bjVsZ2pnOCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/iuttaLUMRLWEgJKRHx/giphy.gif')
-        .setColor(0xFF0000);
+    panelUpdatePromise = panelUpdatePromise.then(async () => {
+        if (panelUpdating) return;
+        panelUpdating = true;
 
-    const infoEmbed = new EmbedBuilder()
-        .setTitle('KOS Submission System')
-        .setColor(0xFF0000)
-        .setDescription(`
+        const gifEmbed = new EmbedBuilder()
+            .setImage('https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExc2FoODRjMmVtNmhncjkyZzY0ZGVwa2l3dzV0M3UyYmZ4bjVsZ2pnOCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/iuttaLUMRLWEgJKRHx/giphy.gif')
+            .setColor(0xFF0000);
+
+        const infoEmbed = new EmbedBuilder()
+            .setTitle('KOS Submission System')
+            .setColor(0xFF0000)
+            .setDescription(`
 This bot organizes LBG players and clans onto the KOS list for YX members.
 
 Players
-To add players, use ^kos add or ^ka
+Use ^ka to add, ^kr to remove.
 Example: ^ka poison poisonrebuild
-To remove players, use ^kr
-Example: ^kr poison poisonrebuild
 
 Clans
-To add clans, use ^kca
+Use ^kca to add, ^kcr to remove.
 Example: ^kca yx eu
-To remove clans, use ^kcr
-Example: ^kcr yx eu
 
 Thank you for being part of YX!
         `);
 
-    async function fetchOrSendEmbed(id, embed) {
-        try {
-            if (id) {
-                const msg = await channel.messages.fetch(id).catch(()=>null);
-                if (msg) return (await msg.edit({ embeds: [embed] }))?.id;
-            }
-        } catch {}
-        const msg = await channel.send({ embeds: [embed] });
-        return msg.id;
-    }
+        async function fetchOrSendEmbed(id, embed) {
+            try {
+                if (id) {
+                    const msg = await channel.messages.fetch(id).catch(()=>null);
+                    if (msg) return (await msg.edit({ embeds: [embed] }))?.id;
+                }
+            } catch {}
+            const msg = await channel.send({ embeds: [embed] });
+            return msg.id;
+        }
 
-    kosData.panelMessages.gif = await fetchOrSendEmbed(kosData.panelMessages.gif, gifEmbed);
-    kosData.panelMessages.tutorial = await fetchOrSendEmbed(kosData.panelMessages.tutorial, infoEmbed);
+        kosData.panelMessages.gif = await fetchOrSendEmbed(kosData.panelMessages.gif, gifEmbed);
+        kosData.panelMessages.tutorial = await fetchOrSendEmbed(kosData.panelMessages.tutorial, infoEmbed);
 
-    saveData();
-    panelUpdating = false;
+        saveData();
+        panelUpdating = false;
+    }).catch(console.error);
+
+    return panelUpdatePromise;
 }
 
 // ---------------- PREFIX COMMANDS ----------------
@@ -194,16 +201,18 @@ client.on('messageCreate', async msg => {
 
     const p = msg.content.trim().split(/\s+/);
     const cmd = p[0].toLowerCase();
-    let handled = false;
 
     async function sendReplyOnce(text) {
-        if (handled) return;
-        handled = true;
+        const key = `${msg.author.id}-${msg.channel.id}-${text}`;
+        if (recentReplies.has(key)) return;
+        recentReplies.add(key);
+
         try {
             const botMsg = await msg.channel.send(`<@${msg.author.id}> ${text}`);
             setTimeout(() => {
                 botMsg.delete().catch(()=>{});
                 msg.delete().catch(()=>{});
+                recentReplies.delete(key);
             }, 3000);
         } catch {}
     }
@@ -227,7 +236,6 @@ client.on('messageCreate', async msg => {
     if (cmd === '^ka') {
         const name = p[1], username = p[2];
         if (!name || !username) return sendReplyOnce('Name and username required.');
-        // allow same name with different usernames
         if (kosData.players.some(x => norm(x.name) === norm(name) && x.username === username)) 
             return sendReplyOnce('This player+username already exists.');
         kosData.players.push({ name, username, addedBy: msg.author.id });
