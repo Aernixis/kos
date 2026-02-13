@@ -1,281 +1,193 @@
-require('dotenv').config();
-const fs = require('fs');
-const { Client, GatewayIntentBits, Partials, EmbedBuilder } = require('discord.js');
+require("dotenv").config();
+const fs = require("fs");
+const { Client, GatewayIntentBits } = require("discord.js");
 
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent
-    ],
-    partials: [Partials.Channel]
+    ]
 });
 
-// ===================== CONSTANTS =====================
-const OWNER_ID = '1283217337084018749';
-const DATA_FILE = './data.json';
+const DATA_FILE = "./data.json";
 
-// ===================== LOAD DATA WITH SAFE DEFAULTS =====================
+/* =========================
+   LOAD + NORMALIZE DATA
+========================= */
+
 let data = {
     players: [],
     priority: [],
-    clans: [],
-    panel: { gif: null, tutorial: null },
-    list: { channelId: null, players: null, priority: null, clans: null }
+    clans: []
 };
 
-if (fs.existsSync(DATA_FILE)) {
-    try {
-        const loaded = JSON.parse(fs.readFileSync(DATA_FILE));
-        data.players = loaded.players || [];
-        data.priority = loaded.priority || [];
-        data.clans = loaded.clans || [];
-        data.panel = loaded.panel || { gif: null, tutorial: null };
-        data.list = loaded.list || { channelId: null, players: null, priority: null, clans: null };
-    } catch(e) {
-        console.error('Failed to load data.json, using defaults', e);
+function load() {
+    if (fs.existsSync(DATA_FILE)) {
+        data = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
     }
-}
 
-const save = () => fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
-const norm = s => s.toLowerCase();
+    if (!Array.isArray(data.players)) data.players = [];
+    if (!Array.isArray(data.priority)) data.priority = [];
+    if (!Array.isArray(data.clans)) data.clans = [];
 
-// ===================== FORMAT FUNCTIONS =====================
-const fmtPlayer = p => p.name + (p.username ? ` : ${p.username}` : '');
+    // ---- NORMALIZE PLAYERS ----
+    data.players = data.players
+        .filter(Boolean)
+        .map(p => ({
+            name: String(p.name || p).trim(),
+            username: p.username ? String(p.username).trim() : null
+        }));
 
-const playersText = () =>
-  (data.players || [])
-    .filter(p => !data.priority.includes(norm(p.name)))
-    .sort((a,b)=>a.name.localeCompare(b.name))
-    .map(fmtPlayer)
-    .join('\n') || 'None';
+    // ---- NORMALIZE PRIORITY ----
+    data.priority = [...new Set(
+        data.priority
+            .filter(Boolean)
+            .map(p => String(p).trim())
+    )];
 
-const priorityText = () =>
-  (data.priority || [])
-    .map(n => data.players.find(p=>norm(p.name)===n))
-    .filter(Boolean)
-    .map(fmtPlayer)
-    .sort()
-    .join('\n') || 'None';
-
-const clansText = () =>
-  (data.clans || [])
-    .filter(c => c && c.clan)
-    .map(c => c.clan)
-    .sort()
-    .join('\n') || 'None';
-
-// ===================== EDIT OR CREATE MESSAGE =====================
-async function editOrCreate(channel, id, payload) {
-    if (id) {
-        const msg = await channel.messages.fetch(id).catch(()=>null);
-        if (msg) {
-            await msg.edit(payload);
-            return msg.id;
-        }
-    }
-    const msg = await channel.send(payload);
-    return msg.id;
-}
-
-// ===================== LIST UPDATE =====================
-async function updateList(channel) {
-    if (!channel) return;
-    data.list.channelId = channel.id;
-
-    data.list.players = await editOrCreate(channel, data.list.players, {
-        content: `\`\`\`\n–––––– PLAYERS ––––––\n${playersText()}\n\`\`\``
-    });
-
-    data.list.priority = await editOrCreate(channel, data.list.priority, {
-        content: `\`\`\`\n–––––– PRIORITY ––––––\n${priorityText()}\n\`\`\``
-    });
-
-    data.list.clans = await editOrCreate(channel, data.list.clans, {
-        content: `\`\`\`\n–––––– CLANS ––––––\n${clansText()}\n\`\`\``
-    });
+    // ---- NORMALIZE CLANS ----
+    data.clans = [...new Set(
+        data.clans
+            .filter(Boolean)
+            .map(c => typeof c === "string" ? c.trim() : c.name?.trim())
+            .filter(Boolean)
+    )];
 
     save();
 }
 
-// ===================== PANEL =====================
-async function updatePanel(channel) {
-    if (!channel) return;
-
-    const gifEmbed = new EmbedBuilder()
-        .setColor(0xFF0000)
-        .setImage('https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExc2FoODRjMmVtNmhncjkyZzY0ZGVwa2l3dzV0M3UyYmZ4bjVsZ2pnOCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/iuttaLUMRLWEgJKRHx/giphy.gif');
-
-    const tutorialEmbed = new EmbedBuilder()
-        .setColor(0xFF0000)
-        .setTitle('KOS Submission System')
-        .setDescription(`
-This bot organizes LBG players and clans onto the KOS list for YX members.
-
-Players
-To add players, use the command ^kos add or ^ka
-When adding players, place the name before the username
-Example:
-^kos add poison poisonrebuild
-^ka poison poisonrebuild
-To remove players, use the command ^kos remove or ^kr
-Removing players follows the same format as adding them
-Example:
-^kos remove poison poisonrebuild
-^kr poison poisonrebuild
-
-Clans
-To add clans, use the command ^kos clan add or ^kca
-When adding clans, place the name before the region and use the short region code
-Example:
-^kos clan add yx eu
-^kca yx eu
-To remove clans, use the command ^kos clan remove or ^kcr
-Removing clans follows the same format as adding them
-Example:
-^kos clan remove yx eu
-^kcr yx eu
-
-Thank you for being apart of YX!
-        `);
-
-    data.panel.gif = await editOrCreate(channel, data.panel.gif, { embeds: [gifEmbed] });
-    data.panel.tutorial = await editOrCreate(channel, data.panel.tutorial, { embeds: [tutorialEmbed] });
-
-    save();
+function save() {
+    fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
 }
 
-// ===================== PREFIX COMMANDS =====================
-client.on('messageCreate', async msg => {
-    if (msg.author.bot || !msg.content.startsWith('^')) return;
+/* =========================
+   LIST BUILDER
+========================= */
 
-    const args = msg.content.trim().split(/\s+/);
-    const cmd = args[0].toLowerCase();
+function buildList() {
+    const out = [];
 
-    const respond = async text => {
-        const m = await msg.channel.send(`<@${msg.author.id}> ${text}`);
-        setTimeout(()=>{ m.delete().catch(()=>{}); msg.delete().catch(()=>{}); },3000);
-    };
-
-    // ----- PLAYER COMMANDS -----
-    if (cmd === '^ka') {
-        const [_, name, username] = args;
-        if (!name || !username) return respond('Name and username required.');
-        if (data.players.some(p=>norm(p.name)===norm(name) && p.username===username)) return respond('Player already exists.');
-
-        data.players.push({ name, username });
-        save();
-
-        if (data.list.channelId) {
-            const ch = await client.channels.fetch(data.list.channelId);
-            await updateList(ch);
-        }
-        return respond(`Added ${name}`);
+    out.push("–––––– PLAYERS ––––––");
+    if (data.players.length === 0) {
+        out.push("None");
+    } else {
+        data.players
+            .sort((a, b) => a.name.localeCompare(b.name))
+            .forEach(p => {
+                if (p.username) out.push(`${p.name} : ${p.username}`);
+                else out.push(p.name);
+            });
     }
 
-    if (cmd === '^kr') {
-        const name = args[1];
-        if (!name) return respond('Name required.');
-
-        data.players = data.players.filter(p=>norm(p.name)!==norm(name));
-        data.priority = data.priority.filter(n=>n!==norm(name));
-        save();
-
-        if (data.list.channelId) {
-            const ch = await client.channels.fetch(data.list.channelId);
-            await updateList(ch);
-        }
-        return respond(`Removed ${name}`);
+    out.push("–––––– PRIORITY ––––––");
+    if (data.priority.length === 0) {
+        out.push("None");
+    } else {
+        data.priority
+            .sort((a, b) => a.localeCompare(b))
+            .forEach(p => out.push(p));
     }
 
-    // ----- PRIORITY -----
-    if (['^p','^pa','^pr'].includes(cmd)) {
-        const name = args[1];
-        if (!name) return respond('Name required.');
-        const key = norm(name);
+    out.push("–––––– CLANS ––––––");
+    if (data.clans.length === 0) {
+        out.push("None");
+    } else {
+        data.clans
+            .sort((a, b) => a.localeCompare(b))
+            .forEach(c => out.push(c));
+    }
 
-        if (!data.players.some(p => norm(p.name) === key) && cmd === '^pa') {
-            const username = args[2] || '';
+    return "```" + out.join("\n") + "```";
+}
+
+/* =========================
+   COMMAND HANDLER
+========================= */
+
+client.on("messageCreate", async msg => {
+    if (msg.author.bot) return;
+    if (!msg.content.startsWith("^")) return;
+
+    const args = msg.content.slice(1).trim().split(/\s+/);
+    const cmd = args.shift()?.toLowerCase();
+
+    let changed = false;
+
+    // ---- ADD PLAYER ----
+    if (cmd === "ka") {
+        const name = args.shift();
+        const username = args.shift() || null;
+        if (!name) return;
+
+        if (!data.players.some(p => p.name === name && p.username === username)) {
             data.players.push({ name, username });
-        }
-
-        if (cmd === '^p' || cmd === '^pa') {
-            if (!data.priority.includes(key)) data.priority.push(key);
-            save();
-            if (data.list.channelId) {
-                const ch = await client.channels.fetch(data.list.channelId);
-                await updateList(ch);
-            }
-            return respond(`Prioritized ${name}`);
-        }
-
-        if (cmd === '^pr') {
-            data.priority = data.priority.filter(n=>n!==key);
-            save();
-            if (data.list.channelId) {
-                const ch = await client.channels.fetch(data.list.channelId);
-                await updateList(ch);
-            }
-            return respond(`Demoted ${name}`);
+            changed = true;
         }
     }
 
-    // ----- CLAN COMMANDS -----
-    if (cmd === '^kca') {
-        const name = args[1], region = args[2];
-        if (!name || !region) return respond('Clan name and region required.');
-        const clanStr = `${region.toUpperCase()}»${name.toUpperCase()}`;
-        if (data.clans.some(c=>c.clan===clanStr)) return respond('Clan already exists.');
+    // ---- REMOVE PLAYER ----
+    if (cmd === "kr") {
+        const name = args.shift();
+        const username = args.shift() || null;
 
-        data.clans.push({ clan: clanStr });
-        save();
-        if (data.list.channelId) {
-            const ch = await client.channels.fetch(data.list.channelId);
-            await updateList(ch);
-        }
-        return respond(`Added clan ${clanStr}`);
+        const before = data.players.length;
+        data.players = data.players.filter(
+            p => !(p.name === name && p.username === username)
+        );
+        if (data.players.length !== before) changed = true;
     }
 
-    if (cmd === '^kcr') {
-        const name = args[1], region = args[2];
-        if (!name || !region) return respond('Clan name and region required.');
-        const clanStr = `${region.toUpperCase()}»${name.toUpperCase()}`;
-        data.clans = data.clans.filter(c=>c.clan!==clanStr);
-        save();
-        if (data.list.channelId) {
-            const ch = await client.channels.fetch(data.list.channelId);
-            await updateList(ch);
+    // ---- PRIORITY ADD ----
+    if (cmd === "pa" || cmd === "p") {
+        const name = args.join(" ");
+        if (name && !data.priority.includes(name)) {
+            data.priority.push(name);
+            changed = true;
         }
-        return respond(`Removed clan ${clanStr}`);
     }
+
+    // ---- PRIORITY REMOVE ----
+    if (cmd === "pr") {
+        const name = args.join(" ");
+        const before = data.priority.length;
+        data.priority = data.priority.filter(p => p !== name);
+        if (before !== data.priority.length) changed = true;
+    }
+
+    // ---- CLAN ADD ----
+    if (cmd === "kca") {
+        const clan = args.join(" ");
+        if (clan && !data.clans.includes(clan)) {
+            data.clans.push(clan);
+            changed = true;
+        }
+    }
+
+    // ---- CLAN REMOVE ----
+    if (cmd === "kcr") {
+        const clan = args.join(" ");
+        const before = data.clans.length;
+        data.clans = data.clans.filter(c => c !== clan);
+        if (before !== data.clans.length) changed = true;
+    }
+
+    if (!changed) return;
+
+    save();
+
+    await msg.reply({
+        content: "KOS list updated.\n" + buildList()
+    });
 });
 
-// ===================== SLASH COMMANDS =====================
-client.on('interactionCreate', async i => {
-    if (!i.isChatInputCommand() || i.user.id !== OWNER_ID) return;
+/* =========================
+   STARTUP
+========================= */
 
-    await i.deferReply({ ephemeral:true });
-
-    if (i.commandName === 'panel') {
-        await updatePanel(i.channel);
-        return i.editReply('Panel updated.');
-    }
-
-    if (i.commandName === 'list') {
-        await updateList(i.channel);
-        return i.editReply('KOS list updated.');
-    }
-
-    if (i.commandName === 'submission') {
-        data.list.channelId = i.channelId;
-        save();
-        return i.editReply('Submission channel set.');
-    }
+client.once("ready", () => {
+    console.log(`Logged in as ${client.user.tag}`);
+    load();
 });
-
-// ===================== READY =====================
-client.once('ready', () =>
-    console.log(`Logged in as ${client.user.tag}`)
-);
 
 client.login(process.env.TOKEN);
