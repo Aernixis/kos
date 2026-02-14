@@ -46,7 +46,6 @@ function loadData() {
 
   const raw = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
 
-  // Load players (keep those with or without username)
   data.players = new Map();
   if (raw.players) {
     raw.players.forEach(p => {
@@ -55,19 +54,11 @@ function loadData() {
     });
   }
 
-  // Load priority (map usernames or names to actual players)
-  data.priority = new Set();
-  if (raw.topPriority) {
-    raw.topPriority.forEach(u => {
-      if (u) data.priority.add(u);
-    });
-  }
-
-  // Load clans
+  data.priority = new Set(raw.topPriority || []);
   data.clans = new Set(raw.clans || []);
 
-  data.submissionChannel = raw.submissionChannelId || null;
-  data.listMessages = raw.messages || data.listMessages;
+  data.submissionChannel = raw.submissionChannel || null;
+  data.listMessages = raw.listMessages || data.listMessages;
   data.panelMessages = raw.panelMessages || data.panelMessages;
   data.revision = raw.revision || 0;
 }
@@ -200,18 +191,10 @@ client.on('messageCreate', async msg => {
   const args = msg.content.trim().split(/\s+/);
   const cmd = args.shift().toLowerCase();
 
-  // ---------- Submission channel lock ----------
-  if (cmd === '^submission') {
-    data.submissionChannel = msg.channel.id;
-    saveData();
-    const m = await msg.channel.send(`<@${msg.author.id}> KOS commands locked to <#${msg.channel.id}>`);
-    setTimeout(() => { m.delete().catch(()=>{}); msg.delete().catch(()=>{}); }, 4000);
-    return;
-  }
+  // ---------- Enforce submission channel ----------
   if (data.submissionChannel && msg.channel.id !== data.submissionChannel) {
     const m = await msg.channel.send(`<@${msg.author.id}> Use KOS commands in <#${data.submissionChannel}>.`);
-    setTimeout(() => { m.delete().catch(()=>{}); msg.delete().catch(()=>{}); }, 4000);
-    return;
+    return setTimeout(() => { m.delete().catch(()=>{}); msg.delete().catch(()=>{}); }, 4000);
   }
 
   // ---------- ^ka ----------
@@ -298,7 +281,6 @@ client.on('messageCreate', async msg => {
       return setTimeout(() => { m.delete().catch(()=>{}); msg.delete().catch(()=>{}); }, 3000);
     }
 
-    // ^pa enforces only name
     if (cmd === '^pa') {
       const [name, username] = args;
       if (!name) {
@@ -352,13 +334,21 @@ client.on('interactionCreate', async i => {
   if (i.user.id !== OWNER_ID) return;
 
   await i.deferReply({ ephemeral: true });
+
   if (i.commandName === 'panel') {
     await updatePanel(i.channel);
     await i.editReply({ content: 'Panel updated.' });
   }
+
   if (i.commandName === 'list') {
     await updateKosList(i.channel);
     await i.editReply({ content: 'KOS list created.' });
+  }
+
+  if (i.commandName === 'submission') {
+    data.submissionChannel = i.channel.id;
+    saveData();
+    await i.editReply({ content: `KOS commands locked to <#${i.channel.id}>` });
   }
 });
 
@@ -368,8 +358,3 @@ require('http').createServer((req, res) => res.end('Bot running')).listen(PORT);
 
 /* ===================== LOGIN ===================== */
 client.login(process.env.TOKEN);
-
-
-
-
-
