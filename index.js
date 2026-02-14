@@ -191,7 +191,7 @@ client.on('messageCreate', async msg => {
   if (cmd === '^ka') {
     const [name, username] = args;
     if (!name || !username) {
-      const m = await msg.channel.send(`<@${msg.author.id}> Missing name.`);
+      const m = await msg.channel.send(`<@${msg.author.id}> Missing name and username.`);
       return setTimeout(() => { m.delete().catch(()=>{}); msg.delete().catch(()=>{}); }, 3000);
     }
     if (data.players.has(username)) {
@@ -341,3 +341,4 @@ require('http').createServer((req, res) => res.end('Bot running')).listen(PORT);
 
 /* ===================== LOGIN ===================== */
 client.login(process.env.TOKEN);
+
