@@ -1,119 +1,335 @@
-{
-  "submissionChannelId": null,
-  "listChannelId": null,
-  "messages": {
-    "players": null,
-    "topPriority": null,
-    "clans": null
-  },
-  "panelMessages": {
-    "gif": null,
-    "tutorial": null
-  },
-  "listData": {
-    "channelId": null,
-    "playersMessageId": null,
-    "priorityMessageId": null,
-    "clansMessageId": null
-  },
-  "players": [
-    {"name":"1U_0I","username":"1U_0I","addedBy":"1283217337084018749"},
-    {"name":"—043—","username":"lennoxtownmonkey15","addedBy":"1283217337084018749"},
-    {"name":"0liver","username":"mm2_1love19","addedBy":"1283217337084018749"},
-    {"name":"999_kayden","username":"","addedBy":"1283217337084018749"},
-    {"name":"999_lemacaque","username":"","addedBy":"1283217337084018749"},
-    {"name":"Afterburn","username":"Fangxburn","addedBy":"1283217337084018749"},
-    {"name":"Akiren","username":"Artem_274912","addedBy":"1283217337084018749"},
-    {"name":"Amazingboy2382","username":"","addedBy":"1283217337084018749"},
-    {"name":"anton_raton","username":"","addedBy":"1283217337084018749"},
-    {"name":"arsonguy","username":"Gamingx_gaming","addedBy":"1283217337084018749"},
-    {"name":"Atomic","username":"Bobby_JordanCR","addedBy":"1283217337084018749"},
-    {"name":"Atomic","username":"zioles123665","addedBy":"1283217337084018749"},
-    {"name":"BENJI","username":"Senj_77","addedBy":"1283217337084018749"},
-    {"name":"CG_Jun","username":"Juns_shrine","addedBy":"1283217337084018749"},
-    {"name":"COOLSKELETON95","username":"CoolSkeleton95_J","addedBy":"1283217337084018749"},
-    {"name":"Duperamr7","username":"","addedBy":"1283217337084018749"},
-    {"name":"Elsanti","username":"Suscriproll","addedBy":"1283217337084018749"},
-    {"name":"Erasi_Asy","username":"","addedBy":"1283217337084018749"},
-    {"name":"Esebas2345","username":"","addedBy":"1283217337084018749"},
-    {"name":"epaxit","username":"","addedBy":"1283217337084018749"},
-    {"name":"eye","username":"FAWAX921","addedBy":"1283217337084018749"},
-    {"name":"Friday_UAEban","username":"EyesWiThered","addedBy":"1283217337084018749"},
-    {"name":"holi98cclllll","username":"","addedBy":"1283217337084018749"},
-    {"name":"HoWitzer","username":"Frandfrork","addedBy":"1283217337084018749"},
-    {"name":"I_atemytable","username":"henkiespo","addedBy":"1283217337084018749"},
-    {"name":"IceBreaker","username":"GlebUA6","addedBy":"1283217337084018749"},
-    {"name":"IL1US","username":"vlad1357909090","addedBy":"1283217337084018749"},
-    {"name":"ItsGoingDown","username":"","addedBy":"1283217337084018749"},
-    {"name":"Jayce","username":"jayce_devs","addedBy":"1283217337084018749"},
-    {"name":"Jerry","username":"dark_reaperxy","addedBy":"1283217337084018749"},
-    {"name":"Jhu96796ii","username":"","addedBy":"1283217337084018749"},
-    {"name":"Jonion","username":"GohansannKid","addedBy":"1283217337084018749"},
-    {"name":"Koshka_Nika","username":"Xv13600","addedBy":"1283217337084018749"},
-    {"name":"Leo","username":"BOOK9915","addedBy":"1283217337084018749"},
-    {"name":"LordOfCycles","username":"","addedBy":"1283217337084018749"},
-    {"name":"Lilhoneylover","username":"","addedBy":"1283217337084018749"},
-    {"name":"lshshcbfr","username":"","addedBy":"1283217337084018749"},
-    {"name":"Mab/Yosh","username":"","addedBy":"1283217337084018749"},
-    {"name":"megarandom77","username":"","addedBy":"1283217337084018749"},
-    {"name":"milkvey64","username":"","addedBy":"1283217337084018749"},
-    {"name":"Nowhere","username":"MehmeT_003100","addedBy":"1283217337084018749"},
-    {"name":"PARK_P12MI","username":"le_PAINfou7","addedBy":"1283217337084018749"},
-    {"name":"Polaris","username":"PolarisFR","addedBy":"1283217337084018749"},
-    {"name":"RR_bf","username":"","addedBy":"1283217337084018749"},
-    {"name":"RR_yori","username":"","addedBy":"1283217337084018749"},
-    {"name":"raga","username":"","addedBy":"1283217337084018749"},
-    {"name":"RASHKA","username":"Slowzyy86","addedBy":"1283217337084018749"},
-    {"name":"Rtd_Zidox","username":"Zidox_7","addedBy":"1283217337084018749"},
-    {"name":"Saibot_xMeddy","username":"vlad0k_i","addedBy":"1283217337084018749"},
-    {"name":"shairaxn","username":"","addedBy":"1283217337084018749"},
-    {"name":"sousoune81100","username":"","addedBy":"1283217337084018749"},
-    {"name":"Spitfire","username":"Therealwarlock1","addedBy":"1283217337084018749"},
-    {"name":"STN_An1","username":"ana_011528","addedBy":"1283217337084018749"},
-    {"name":"Susmogus264","username":"","addedBy":"1283217337084018749"},
-    {"name":"TheBlueRay","username":"ElSanti0026","addedBy":"1283217337084018749"},
-    {"name":"uruma","username":"","addedBy":"1283217337084018749"},
-    {"name":"Valorantussvintus","username":"","addedBy":"1283217337084018749"},
-    {"name":"Yassen_Kun","username":"yaseenvx","addedBy":"1283217337084018749"},
-    {"name":"hamad","username":"","addedBy":"1283217337084018749"},
-    {"name":"vagg","username":"","addedBy":"1283217337084018749"},
-    {"name":"cawaigirl","username":"CoolLitleG1rl","addedBy":"1283217337084018749"},
-    {"name":"sairpluto","username":"sairpluto","addedBy":"1283217337084018749"},
-    {"name":"Sohee_macho","username":"Armandonar","addedBy":"1283217337084018749"},
-    {"name":"67321","username":"Xdd332166","addedBy":"1283217337084018749"},
-    {"name":"Shairaxn","username":"","addedBy":"1283217337084018749"},
-    {"name":"Pingvinyasha_2","username":"","addedBy":"1283217337084018749"},
-    {"name":"3mkhsin59","username":"","addedBy":"1283217337084018749"},
-    {"name":"sin","username":"Flircher","addedBy":"1283217337084018749"},
-    {"name":"Frederick","username":"lalala123123222","addedBy":"1283217337084018749"},
-    {"name":"laziz","username":"sobirovLaziz_010","addedBy":"1283217337084018749"}
+require('dotenv').config();
+const fs = require('fs');
+const { Client, GatewayIntentBits, Partials, EmbedBuilder } = require('discord.js');
+
+/* ===================== CLIENT ===================== */
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent
   ],
-  "topPriority": [
-    "Rtd_Zidox",
-    "Wezah",
-    "RASHKA",
-    "Spitfire",
-    "Rekt @primalflick2024",
-    "smile",
-    "icewraith"
-  ],
-  "clans": [
-    "EU»XI",
-    "EU»RR",
-    "EU»ROTA",
-    "EU»RTD",
-    "EU»TCK",
-    "EU»PARK",
-    "EU»TV",
-    "EU»RDR",
-    "EU»NOTA",
-    "EU»STS",
-    "EU»ZD",
-    "NA»TSA",
-    "NA»CSR/CDR",
-    "NA»STN",
-    "NA»DTA",
-    "NA»SH",
-    "NA»ATK"
-  ]
+  partials: [Partials.Channel]
+});
+
+/* ===================== CONSTANTS ===================== */
+const OWNER_ID = '1283217337084018749';
+const PRIORITY_ROLE_ID = '1412837397607092405';
+const DATA_FILE = './data.json';
+
+/* ===================== DATA ===================== */
+let data = {
+  players: new Map(),
+  priority: new Set(),
+  clans: new Set(),
+  submissionChannel: null,
+  listMessages: { players: null, priority: null, clans: null },
+  panelMessages: { gif: null, tutorial: null },
+  revision: 0
+};
+
+/* ===================== LOAD / SAVE ===================== */
+function saveData() {
+  fs.writeFileSync(DATA_FILE, JSON.stringify({
+    players: [...data.players.values()],
+    topPriority: [...data.priority],
+    clans: [...data.clans],
+    submissionChannel: data.submissionChannel,
+    listMessages: data.listMessages,
+    panelMessages: data.panelMessages,
+    revision: data.revision
+  }, null, 2));
 }
+
+function loadData() {
+  if (!fs.existsSync(DATA_FILE)) return;
+
+  const raw = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+
+  // Load players
+  data.players = new Map();
+  if (raw.players) {
+    raw.players.forEach(p => {
+      const key = p.username || p.name;
+      data.players.set(key, p);
+    });
+  }
+
+  // Load priority
+  data.priority = new Set();
+  if (raw.topPriority) {
+    raw.topPriority.forEach(u => {
+      if (u) data.priority.add(u);
+    });
+  }
+
+  // Load clans
+  data.clans = new Set(raw.clans || []);
+
+  data.submissionChannel = raw.submissionChannelId || null;
+  data.listMessages = raw.messages || data.listMessages;
+  data.panelMessages = raw.panelMessages || data.panelMessages;
+  data.revision = raw.revision || 0;
+}
+loadData();
+
+/* ===================== HELPERS ===================== */
+function canUsePriority(msg) {
+  if (msg.author.id === OWNER_ID) return true;
+  return msg.member?.roles.cache.has(PRIORITY_ROLE_ID);
+}
+
+function rev() { data.revision++; return '\u200B'.repeat((data.revision % 10) + 1); }
+
+async function replyOnce(msg, content, timeout = 3000) {
+  const m = await msg.channel.send(`<@${msg.author.id}> ${content}`);
+  setTimeout(() => { m.delete().catch(()=>{}); msg.delete().catch(()=>{}); }, timeout);
+}
+
+/* ===================== FORMATTERS ===================== */
+function formatPlayers() {
+  const rows = [...data.players.values()]
+    .filter(p => !data.priority.has(p.username || p.name))
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map(p => `${p.name} : ${p.username || 'N/A'}`);
+  return rows.length ? rows.join('\n') : 'None';
+}
+
+function formatPriority() {
+  const rows = [...data.priority].map(u => {
+    let p = data.players.get(u);
+    if (!p) p = [...data.players.values()].find(pl => (pl.username || pl.name).toLowerCase() === u.toLowerCase());
+    return p ? `${p.name} : ${p.username || 'N/A'}` : u;
+  });
+  return rows.length ? rows.join('\n') : 'None';
+}
+
+function formatClans() {
+  return data.clans.size ? [...data.clans].sort().join('\n') : 'None';
+}
+
+/* ===================== LIST UPDATER ===================== */
+let updatingSections = {};
+async function updateKosList(channel, sectionToUpdate = null) {
+  if (!channel) return;
+
+  const sections = [
+    ['players', '–––––– PLAYERS ––––––', formatPlayers],
+    ['priority', '–––––– PRIORITY ––––––', formatPriority],
+    ['clans', '–––––– CLANS ––––––', formatClans]
+  ];
+
+  for (const [key, title, getContent] of sections) {
+    if (sectionToUpdate && key !== sectionToUpdate) continue;
+    if (updatingSections[key]) continue;
+    updatingSections[key] = true;
+
+    const text = `\`\`\`${title}\n${getContent()}\n\`\`\`${rev()}`;
+    let msg = null;
+    if (data.listMessages[key]) msg = await channel.messages.fetch(data.listMessages[key]).catch(() => null);
+
+    if (msg) await msg.edit(text).catch(() => {});
+    else {
+      msg = await channel.send(text).catch(() => {});
+      if (msg) data.listMessages[key] = msg.id;
+    }
+
+    updatingSections[key] = false;
+  }
+  saveData();
+}
+
+/* ===================== PANEL ===================== */
+async function updatePanel(channel) {
+  if (!channel) return;
+
+  const gif = new EmbedBuilder()
+    .setColor(0xFF0000)
+    .setImage('https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExc2FoODRjMmVtNmhncjkyZzY0ZGVwa2l3dzV0M3UyYmZ4bjVsZ2pnOCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/iuttaLUMRLWEgJKRHx/giphy.gif');
+
+  const info = new EmbedBuilder()
+    .setTitle('KOS Submission System')
+    .setColor(0xFF0000)
+    .setDescription(`
+This bot organizes LBG players and clans onto the KOS list for YX members.
+**If there are multiple users with the same display name on the KOS list, a username will be required.**
+
+Player Commands
+^ka name username – Add a player to the KOS list
+^kr name  – Remove a player from the KOS list
+
+Examples
+^ka poison poisonrebuild
+^kr poison poisonrebuild
+
+Clan Commands
+^kca name region – Add a clan to the KOS list
+^kcr name region – Remove a clan from the KOS list
+
+Examples
+^kca yx eu
+^kcr yx eu
+
+Priority Commands (YX Founders Only)
+^p name  – Promote a player to priority
+^pr name  – Remove a player from priority
+^pa name  – Add player directly to priority
+
+Examples
+^p poison
+^pr poison 
+^pa poison 
+
+Thank you for being a part of YX!
+    `);
+
+  async function upsert(id, embed) {
+    if (id) {
+      const msg = await channel.messages.fetch(id).catch(() => null);
+      if (msg) return (await msg.edit({ embeds: [embed] })).id;
+    }
+    return (await channel.send({ embeds: [embed] })).id;
+  }
+
+  data.panelMessages.gif = await upsert(data.panelMessages.gif, gif);
+  data.panelMessages.tutorial = await upsert(data.panelMessages.tutorial, info);
+  saveData();
+}
+
+/* ===================== PREFIX COMMANDS ===================== */
+client.on('messageCreate', async msg => {
+  if (msg.author.bot) return;
+  if (!msg.content.startsWith('^')) return;
+
+  const args = msg.content.trim().split(/\s+/);
+  const cmd = args.shift().toLowerCase();
+
+  // ---------- Submission channel lock ----------
+  if (cmd === '^submission') {
+    data.submissionChannel = msg.channel.id;
+    saveData();
+    return replyOnce(msg, `KOS commands locked to <#${msg.channel.id}>`, 4000);
+  }
+  if (data.submissionChannel && msg.channel.id !== data.submissionChannel) {
+    return replyOnce(msg, `Use KOS commands in <#${data.submissionChannel}>.`, 4000);
+  }
+
+  // ---------- ^ka ----------
+  if (cmd === '^ka') {
+    const [name, username] = args;
+    if (!name || !username) return replyOnce(msg, 'Missing name and username.', 3000);
+    if (data.players.has(username)) return replyOnce(msg, `Player already in KOS: ${username}`, 3000);
+
+    data.players.set(username, { name, username, addedBy: msg.author.id });
+    data.priority.delete(username);
+    await updateKosList(msg.channel, 'players');
+    return replyOnce(msg, `Added ${username}`, 3000);
+  }
+
+  // ---------- ^kr ----------
+  if (cmd === '^kr') {
+    const [identifier] = args;
+    if (!identifier) return replyOnce(msg, 'Missing name.', 3000);
+
+    const player = data.players.get(identifier) || [...data.players.values()].find(p => p.name.toLowerCase() === identifier.toLowerCase());
+    if (!player) return replyOnce(msg, 'Player not found.', 3000);
+
+    if (player.addedBy !== msg.author.id && msg.author.id !== OWNER_ID && !canUsePriority(msg)) {
+      return replyOnce(msg, "You didn't add this player.", 3000);
+    }
+
+    data.players.delete(player.username || player.name);
+    data.priority.delete(player.username || player.name);
+    await updateKosList(msg.channel, 'players');
+    await updateKosList(msg.channel, 'priority');
+    return replyOnce(msg, `Removed ${player.username || player.name}`, 3000);
+  }
+
+  // ---------- ^kca ----------
+  if (cmd === '^kca') {
+    const [name, region] = args;
+    if (!name || !region) return replyOnce(msg, 'Missing name and region.', 3000);
+
+    const clan = `${region.toUpperCase()}»${name.toUpperCase()}`;
+    if (data.clans.has(clan)) return replyOnce(msg, `Clan already exists: ${clan}`, 3000);
+
+    data.clans.add(clan);
+    await updateKosList(msg.channel, 'clans');
+    return replyOnce(msg, `Added clan ${clan}`, 3000);
+  }
+
+  // ---------- ^kcr ----------
+  if (cmd === '^kcr') {
+    const [name, region] = args;
+    if (!name || !region) return replyOnce(msg, 'Missing name and region.', 3000);
+
+    const clan = `${region.toUpperCase()}»${name.toUpperCase()}`;
+    if (data.clans.delete(clan)) {
+      await updateKosList(msg.channel, 'clans');
+      return replyOnce(msg, `Removed clan ${clan}`, 3000);
+    }
+  }
+
+  // ---------- Priority commands ----------
+  if (['^p','^pr','^pa'].includes(cmd)) {
+    if (!canUsePriority(msg)) return replyOnce(msg, 'You cannot use priority commands.', 3000);
+
+    if (cmd === '^pa') {
+      const [name, username] = args;
+      if (!name) return replyOnce(msg, 'Missing name.', 3000);
+
+      const key = username || name;
+      if (data.players.has(key)) return replyOnce(msg, `Player already exists: ${key}`, 3000);
+
+      data.players.set(key, { name, username, addedBy: msg.author.id });
+      data.priority.add(key);
+      await updateKosList(msg.channel, 'players');
+      await updateKosList(msg.channel, 'priority');
+      return replyOnce(msg, `Added ${key} directly to priority`, 3000);
+    }
+
+    const [identifier] = args;
+    if (!identifier) return replyOnce(msg, 'Missing name.', 3000);
+
+    const player = data.players.get(identifier) || [...data.players.values()].find(p => p.name.toLowerCase() === identifier.toLowerCase());
+    if (!player) return replyOnce(msg, 'Player not found.', 3000);
+
+    if (cmd === '^p') {
+      data.priority.add(player.username || player.name);
+      await updateKosList(msg.channel, 'priority');
+      return replyOnce(msg, `Promoted ${player.username || player.name} to priority`, 3000);
+    } else if (cmd === '^pr') {
+      data.priority.delete(player.username || player.name);
+      await updateKosList(msg.channel, 'priority');
+      return replyOnce(msg, `Removed ${player.username || player.name} from priority`, 3000);
+    }
+  }
+});
+
+/* ===================== SLASH COMMANDS (OWNER ONLY) ===================== */
+client.on('interactionCreate', async i => {
+  if (!i.isChatInputCommand()) return;
+  if (i.user.id !== OWNER_ID) return;
+
+  try {
+    await i.deferReply({ flags: 64 });
+
+    if (i.commandName === 'panel') {
+      await updatePanel(i.channel);
+      await i.editReply({ content: 'Panel updated.' });
+    }
+    if (i.commandName === 'list') {
+      await updateKosList(i.channel);
+      await i.editReply({ content: 'KOS list created.' });
+    }
+  } catch (err) {
+    console.error('Interaction error:', err);
+  }
+});
+
+/* ===================== DUMMY SERVER FOR RENDER ===================== */
+const PORT = process.env.PORT || 3000;
+require('http').createServer((req, res) => res.end('Bot running')).listen(PORT);
+
+/* ===================== LOGIN ===================== */
+client.login(process.env.TOKEN);
