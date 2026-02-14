@@ -144,7 +144,7 @@ async function updatePanel(channel) {
   const info = new EmbedBuilder()
     .setTitle('KOS Submission System')
     .setColor(0xFF0000)
-    .setDescription('
+    .setDescription(`
 **KOS Submission System**
 This bot organizes LBG players and clans onto the KOS list for YX members.
 **If there are multiple users with the same display name on the KOS list, a username will be required.**
@@ -176,7 +176,7 @@ Examples
 ^pa poison 
 
 Thank you for being a part of YX!
-    ');
+    `);
 
   async function upsert(id, embed) {
     if (id) {
@@ -369,6 +369,7 @@ require('http').createServer((req, res) => res.end('Bot running')).listen(PORT);
 
 /* ===================== LOGIN ===================== */
 client.login(process.env.TOKEN);
+
 
 
 
