@@ -367,14 +367,20 @@ client.on('interactionCreate', async i => {
   if (!i.isChatInputCommand()) return;
   if (i.user.id !== OWNER_ID) return;
 
-  await i.deferReply({ ephemeral: true });
-  if (i.commandName === 'panel') {
-    await updatePanel(i.channel);
-    await i.editReply({ content: 'Panel updated.' });
-  }
-  if (i.commandName === 'list') {
-    await updateKosList(i.channel);
-    await i.editReply({ content: 'KOS list created.' });
+  try {
+    await i.deferReply({ flags: 64 }); // 64 = ephemeral flag
+    
+    if (i.commandName === 'panel') {
+      await updatePanel(i.channel);
+      await i.editReply({ content: 'Panel updated.' });
+    }
+    if (i.commandName === 'list') {
+      await updateKosList(i.channel);
+      await i.editReply({ content: 'KOS list created.' });
+    }
+  } catch (error) {
+    console.error('Interaction error:', error.message);
+    // Interaction likely expired, ignore
   }
 });
 
