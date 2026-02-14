@@ -145,7 +145,6 @@ async function updatePanel(channel) {
     .setTitle('KOS Submission System')
     .setColor(0xFF0000)
     .setDescription(`
-**KOS Submission System**
 This bot organizes LBG players and clans onto the KOS list for YX members.
 **If there are multiple users with the same display name on the KOS list, a username will be required.**
 
@@ -369,6 +368,7 @@ require('http').createServer((req, res) => res.end('Bot running')).listen(PORT);
 
 /* ===================== LOGIN ===================== */
 client.login(process.env.TOKEN);
+
 
 
 
