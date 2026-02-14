@@ -145,9 +145,37 @@ async function updatePanel(channel) {
     .setTitle('KOS Submission System')
     .setColor(0xFF0000)
     .setDescription(
-      `Players ^ka <name> <username> ^kr <name> [username]\n` +
-      `Clans ^kca <name> <region> ^kcr <name> <region>\n` +
-      `Priority ^p <name/username> ^pa <name> <username> ^pr <name/username>`
+**KOS Submission System**
+This bot organizes LBG players and clans onto the KOS list for YX members.
+**If there are multiple users with the same display name on the KOS list, a username will be required.**
+
+Player Commands
+^ka name username – Add a player to the KOS list
+^kr name  – Remove a player from the KOS list
+
+Examples
+^ka poison poisonrebuild
+^kr poison poisonrebuild
+
+Clan Commands
+^kca name region – Add a clan to the KOS list
+^kcr name region – Remove a clan from the KOS list
+
+Examples
+^kca yx eu
+^kcr yx eu
+
+Priority Commands (YX Founders Only)
+^p name  – Promote a player to priority
+^pr name  – Remove a player from priority
+^pa name  – Add player directly to priority
+
+Examples
+^p poison
+^pr poison 
+^pa poison 
+
+Thank you for being a part of YX!`
     );
 
   async function upsert(id, embed) {
@@ -341,4 +369,5 @@ require('http').createServer((req, res) => res.end('Bot running')).listen(PORT);
 
 /* ===================== LOGIN ===================== */
 client.login(process.env.TOKEN);
+
 
