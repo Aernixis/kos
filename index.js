@@ -23,7 +23,7 @@ let data = {
   priority: new Set(),
   clans: new Set(),
   submissionChannel: null,
-  listMessages: { players: null, priority: null, clans: null },
+  listMessages: { players: [], priority: [], clans: [] }, // Changed to arrays to store multiple message IDs
   panelMessages: { gif: null, tutorial: null },
   revision: 0
 };
@@ -73,7 +73,17 @@ function loadData() {
   data.clans = new Set(raw.clans || []);
 
   data.submissionChannel = raw.submissionChannelId || raw.submissionChannel || null;
-  data.listMessages = raw.messages || raw.listMessages || data.listMessages;
+  
+  // Handle both old format (single message ID) and new format (array)
+  if (raw.messages || raw.listMessages) {
+    const msgs = raw.messages || raw.listMessages;
+    data.listMessages = {
+      players: Array.isArray(msgs.players) ? msgs.players : (msgs.players ? [msgs.players] : []),
+      priority: Array.isArray(msgs.priority) ? msgs.priority : (msgs.priority ? [msgs.priority] : []),
+      clans: Array.isArray(msgs.clans) ? msgs.clans : (msgs.clans ? [msgs.clans] : [])
+    };
+  }
+  
   data.panelMessages = raw.panelMessages || data.panelMessages;
   data.revision = raw.revision || 0;
 }
@@ -111,7 +121,38 @@ function formatClans() {
 
 /* ===================== LIST UPDATER ===================== */
 let updatingSections = {};
-async function updateKosList(channel, sectionToUpdate = null) {
+
+// Split content into chunks that fit Discord's 2000 char limit
+function splitIntoChunks(title, content) {
+  const MAX_LENGTH = 1900; // Leave room for code blocks and revision marker
+  const header = `\`\`\`${title}\n`;
+  const footer = `\n\`\`\``;
+  const revMarker = rev();
+  
+  const lines = content.split('\n');
+  const chunks = [];
+  let currentChunk = '';
+  
+  for (const line of lines) {
+    const testChunk = currentChunk ? `${currentChunk}\n${line}` : line;
+    const testLength = header.length + testChunk.length + footer.length + revMarker.length;
+    
+    if (testLength > MAX_LENGTH && currentChunk) {
+      chunks.push(`${header}${currentChunk}${footer}${revMarker}`);
+      currentChunk = line;
+    } else {
+      currentChunk = testChunk;
+    }
+  }
+  
+  if (currentChunk) {
+    chunks.push(`${header}${currentChunk}${footer}${revMarker}`);
+  }
+  
+  return chunks.length ? chunks : [`${header}None${footer}${revMarker}`];
+}
+
+async function updateKosList(channel, sectionToUpdate = null, forceCreate = false) {
   if (!channel) return;
 
   const sections = [
@@ -125,21 +166,47 @@ async function updateKosList(channel, sectionToUpdate = null) {
     if (updatingSections[key]) continue;
     updatingSections[key] = true;
 
-    const text = `\`\`\`${title}\n${getContent()}\n\`\`\`${rev()}`;
-    let msg = null;
-    if (data.listMessages[key]) {
-      msg = await channel.messages.fetch(data.listMessages[key]).catch(() => null);
-    }
+    const content = getContent();
+    const chunks = splitIntoChunks(title, content);
 
-    if (msg) {
-      await msg.edit(text).catch(() => {});
-    } else {
-      // Only create new message if no existing message ID is stored
-      // This prevents creating duplicate lists from prefix commands
-      if (!data.listMessages[key]) {
-        msg = await channel.send(text).catch(() => {});
-        if (msg) data.listMessages[key] = msg.id;
+    if (forceCreate) {
+      // /list command: always create new messages
+      const newMessages = [];
+      for (const chunk of chunks) {
+        const msg = await channel.send(chunk).catch(() => null);
+        if (msg) newMessages.push(msg.id);
       }
+      // Store all message IDs
+      data.listMessages[key] = newMessages;
+    } else {
+      // Prefix commands: only edit existing messages
+      const storedIds = data.listMessages[key] || [];
+      
+      if (storedIds.length > 0) {
+        // Edit existing messages
+        for (let i = 0; i < Math.max(chunks.length, storedIds.length); i++) {
+          if (i < storedIds.length) {
+            const msg = await channel.messages.fetch(storedIds[i]).catch(() => null);
+            if (msg) {
+              if (i < chunks.length) {
+                // Update with new content
+                await msg.edit(chunks[i]).catch(() => {});
+              } else {
+                // Delete extra messages if content shrunk
+                await msg.delete().catch(() => {});
+                storedIds.splice(i, 1);
+                i--;
+              }
+            }
+          } else if (i < chunks.length) {
+            // Need more messages than we have stored - create new ones
+            const msg = await channel.send(chunks[i]).catch(() => null);
+            if (msg) storedIds.push(msg.id);
+          }
+        }
+        data.listMessages[key] = storedIds.filter(id => id); // Clean up any nulls
+      }
+      // If no stored messages exist, prefix commands do nothing (must use /list first)
     }
 
     updatingSections[key] = false;
@@ -373,7 +440,7 @@ client.on('interactionCreate', async i => {
     await i.editReply({ content: 'Panel updated.' });
   }
   if (i.commandName === 'list') {
-    await updateKosList(i.channel);
+    await updateKosList(i.channel, null, true); // forceCreate = true
     await i.editReply({ content: 'KOS list created.' });
   }
 });
