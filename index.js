@@ -23,7 +23,7 @@ let data = {
   priority: new Set(),
   clans: new Set(),
   submissionChannel: null,
-  listMessages: { players: [], priority: [], clans: [] }, // Changed to arrays to store multiple message IDs
+  listMessages: { players: [], priority: [], clans: [] },
   panelMessages: { gif: null, tutorial: null },
   revision: 0
 };
@@ -46,7 +46,6 @@ function loadData() {
 
   const raw = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
 
-  // Load players (keep those with or without username)
   data.players = new Map();
   if (raw.players) {
     raw.players.forEach(p => {
@@ -55,26 +54,17 @@ function loadData() {
     });
   }
 
-  // Load priority (map usernames or names to actual players)
   data.priority = new Set();
   if (raw.topPriority) {
-    raw.topPriority.forEach(u => {
-      if (u) data.priority.add(u);
-    });
+    raw.topPriority.forEach(u => { if (u) data.priority.add(u); });
   }
-  // Also handle 'priority' key for backwards compatibility
   if (raw.priority) {
-    raw.priority.forEach(u => {
-      if (u) data.priority.add(u);
-    });
+    raw.priority.forEach(u => { if (u) data.priority.add(u); });
   }
 
-  // Load clans
   data.clans = new Set(raw.clans || []);
-
   data.submissionChannel = raw.submissionChannelId || raw.submissionChannel || null;
-  
-  // Handle both old format (single message ID) and new format (array)
+
   if (raw.messages || raw.listMessages) {
     const msgs = raw.messages || raw.listMessages;
     data.listMessages = {
@@ -83,7 +73,7 @@ function loadData() {
       clans: Array.isArray(msgs.clans) ? msgs.clans : (msgs.clans ? [msgs.clans] : [])
     };
   }
-  
+
   data.panelMessages = raw.panelMessages || data.panelMessages;
   data.revision = raw.revision || 0;
 }
@@ -94,7 +84,11 @@ function canUsePriority(msg) {
   if (msg.author.id === OWNER_ID) return true;
   return msg.member?.roles.cache.has(PRIORITY_ROLE_ID);
 }
-function rev() { data.revision++; return '\u200B'.repeat((data.revision % 10) + 1); }
+
+function rev() {
+  data.revision++;
+  return '\u200B'.repeat((data.revision % 10) + 1);
+}
 
 /* ===================== FORMATTERS ===================== */
 function formatPlayers() {
@@ -109,7 +103,7 @@ function formatPriority() {
   const rows = [...data.priority].map(u => {
     let p = data.players.get(u);
     if (!p) p = [...data.players.values()].find(pl => (pl.username || pl.name).toLowerCase() === u.toLowerCase());
-    if (!p) return u; // fallback to identifier if player not found
+    if (!p) return u;
     return `${p.name} : ${p.username || 'N/A'}`;
   });
   return rows.length ? rows.join('\n') : 'None';
@@ -122,21 +116,20 @@ function formatClans() {
 /* ===================== LIST UPDATER ===================== */
 let updatingSections = {};
 
-// Split content into chunks that fit Discord's 2000 char limit
-function splitIntoChunks(title, content) {
-  const MAX_LENGTH = 1900; // Leave room for code blocks and revision marker
+// revMarker is passed in so rev() is only called once per section update
+function splitIntoChunks(title, content, revMarker) {
+  const MAX_LENGTH = 1900;
   const header = `\`\`\`${title}\n`;
   const footer = `\n\`\`\``;
-  const revMarker = rev();
-  
+
   const lines = content.split('\n');
   const chunks = [];
   let currentChunk = '';
-  
+
   for (const line of lines) {
     const testChunk = currentChunk ? `${currentChunk}\n${line}` : line;
     const testLength = header.length + testChunk.length + footer.length + revMarker.length;
-    
+
     if (testLength > MAX_LENGTH && currentChunk) {
       chunks.push(`${header}${currentChunk}${footer}${revMarker}`);
       currentChunk = line;
@@ -144,11 +137,11 @@ function splitIntoChunks(title, content) {
       currentChunk = testChunk;
     }
   }
-  
+
   if (currentChunk) {
     chunks.push(`${header}${currentChunk}${footer}${revMarker}`);
   }
-  
+
   return chunks.length ? chunks : [`${header}None${footer}${revMarker}`];
 }
 
@@ -167,46 +160,39 @@ async function updateKosList(channel, sectionToUpdate = null, forceCreate = fals
     updatingSections[key] = true;
 
     const content = getContent();
-    const chunks = splitIntoChunks(title, content);
+    const revMarker = rev(); // called once per section, passed into splitIntoChunks
+    const chunks = splitIntoChunks(title, content, revMarker);
 
     if (forceCreate) {
-      // /list command: always create new messages
       const newMessages = [];
       for (const chunk of chunks) {
         const msg = await channel.send(chunk).catch(() => null);
         if (msg) newMessages.push(msg.id);
       }
-      // Store all message IDs
       data.listMessages[key] = newMessages;
     } else {
-      // Prefix commands: only edit existing messages
       const storedIds = data.listMessages[key] || [];
-      
+
       if (storedIds.length > 0) {
-        // Edit existing messages
         for (let i = 0; i < Math.max(chunks.length, storedIds.length); i++) {
           if (i < storedIds.length) {
             const msg = await channel.messages.fetch(storedIds[i]).catch(() => null);
             if (msg) {
               if (i < chunks.length) {
-                // Update with new content
                 await msg.edit(chunks[i]).catch(() => {});
               } else {
-                // Delete extra messages if content shrunk
                 await msg.delete().catch(() => {});
                 storedIds.splice(i, 1);
                 i--;
               }
             }
           } else if (i < chunks.length) {
-            // Need more messages than we have stored - create new ones
             const msg = await channel.send(chunks[i]).catch(() => null);
             if (msg) storedIds.push(msg.id);
           }
         }
-        data.listMessages[key] = storedIds.filter(id => id); // Clean up any nulls
+        data.listMessages[key] = storedIds.filter(id => id);
       }
-      // If no stored messages exist, prefix commands do nothing (must use /list first)
     }
 
     updatingSections[key] = false;
@@ -286,12 +272,12 @@ client.on('messageCreate', async msg => {
     data.submissionChannel = msg.channel.id;
     saveData();
     const m = await msg.channel.send(`<@${msg.author.id}> KOS commands locked to <#${msg.channel.id}>`);
-    setTimeout(() => { m.delete().catch(()=>{}); msg.delete().catch(()=>{}); }, 4000);
+    setTimeout(() => { m.delete().catch(() => {}); msg.delete().catch(() => {}); }, 4000);
     return;
   }
   if (data.submissionChannel && msg.channel.id !== data.submissionChannel) {
     const m = await msg.channel.send(`<@${msg.author.id}> Use KOS commands in <#${data.submissionChannel}>.`);
-    setTimeout(() => { m.delete().catch(()=>{}); msg.delete().catch(()=>{}); }, 4000);
+    setTimeout(() => { m.delete().catch(() => {}); msg.delete().catch(() => {}); }, 4000);
     return;
   }
 
@@ -300,17 +286,17 @@ client.on('messageCreate', async msg => {
     const [name, username] = args;
     if (!name || !username) {
       const m = await msg.channel.send(`<@${msg.author.id}> Missing name and username.`);
-      return setTimeout(() => { m.delete().catch(()=>{}); msg.delete().catch(()=>{}); }, 3000);
+      return setTimeout(() => { m.delete().catch(() => {}); msg.delete().catch(() => {}); }, 3000);
     }
     if (data.players.has(username)) {
       const m = await msg.channel.send(`<@${msg.author.id}> Player already in KOS: ${username}`);
-      return setTimeout(() => { m.delete().catch(()=>{}); msg.delete().catch(()=>{}); }, 3000);
+      return setTimeout(() => { m.delete().catch(() => {}); msg.delete().catch(() => {}); }, 3000);
     }
     data.players.set(username, { name, username, addedBy: msg.author.id });
     data.priority.delete(username);
     await updateKosList(msg.channel, 'players');
     const m = await msg.channel.send(`<@${msg.author.id}> Added ${username}`);
-    return setTimeout(() => { m.delete().catch(()=>{}); msg.delete().catch(()=>{}); }, 3000);
+    return setTimeout(() => { m.delete().catch(() => {}); msg.delete().catch(() => {}); }, 3000);
   }
 
   // ---------- ^kr ----------
@@ -318,25 +304,23 @@ client.on('messageCreate', async msg => {
     const [identifier] = args;
     if (!identifier) {
       const m = await msg.channel.send(`<@${msg.author.id}> Missing name.`);
-      return setTimeout(() => { m.delete().catch(()=>{}); msg.delete().catch(()=>{}); }, 3000);
+      return setTimeout(() => { m.delete().catch(() => {}); msg.delete().catch(() => {}); }, 3000);
     }
     const player = data.players.get(identifier) || [...data.players.values()].find(p => p.name.toLowerCase() === identifier.toLowerCase());
     if (!player) {
       const m = await msg.channel.send(`<@${msg.author.id}> Player not found.`);
-      return setTimeout(() => { m.delete().catch(()=>{}); msg.delete().catch(()=>{}); }, 3000);
+      return setTimeout(() => { m.delete().catch(() => {}); msg.delete().catch(() => {}); }, 3000);
     }
-
     if (player.addedBy !== msg.author.id && msg.author.id !== OWNER_ID && !canUsePriority(msg)) {
       const m = await msg.channel.send(`<@${msg.author.id}> You didn't add this player.`);
-      return setTimeout(() => { m.delete().catch(()=>{}); msg.delete().catch(()=>{}); }, 3000);
+      return setTimeout(() => { m.delete().catch(() => {}); msg.delete().catch(() => {}); }, 3000);
     }
-
     data.players.delete(player.username || player.name);
     data.priority.delete(player.username || player.name);
     await updateKosList(msg.channel, 'players');
     await updateKosList(msg.channel, 'priority');
     const m = await msg.channel.send(`<@${msg.author.id}> Removed ${player.username || player.name}`);
-    return setTimeout(() => { m.delete().catch(()=>{}); msg.delete().catch(()=>{}); }, 3000);
+    return setTimeout(() => { m.delete().catch(() => {}); msg.delete().catch(() => {}); }, 3000);
   }
 
   // ---------- ^kca ----------
@@ -344,17 +328,17 @@ client.on('messageCreate', async msg => {
     const [name, region] = args;
     if (!name || !region) {
       const m = await msg.channel.send(`<@${msg.author.id}> Missing name and region.`);
-      return setTimeout(() => { m.delete().catch(()=>{}); msg.delete().catch(()=>{}); }, 3000);
+      return setTimeout(() => { m.delete().catch(() => {}); msg.delete().catch(() => {}); }, 3000);
     }
     const clan = `${region.toUpperCase()}»${name.toUpperCase()}`;
     if (data.clans.has(clan)) {
       const m = await msg.channel.send(`<@${msg.author.id}> Clan already exists: ${clan}`);
-      return setTimeout(() => { m.delete().catch(()=>{}); msg.delete().catch(()=>{}); }, 3000);
+      return setTimeout(() => { m.delete().catch(() => {}); msg.delete().catch(() => {}); }, 3000);
     }
     data.clans.add(clan);
     await updateKosList(msg.channel, 'clans');
     const m = await msg.channel.send(`<@${msg.author.id}> Added clan ${clan}`);
-    return setTimeout(() => { m.delete().catch(()=>{}); msg.delete().catch(()=>{}); }, 3000);
+    return setTimeout(() => { m.delete().catch(() => {}); msg.delete().catch(() => {}); }, 3000);
   }
 
   // ---------- ^kcr ----------
@@ -362,55 +346,52 @@ client.on('messageCreate', async msg => {
     const [name, region] = args;
     if (!name || !region) {
       const m = await msg.channel.send(`<@${msg.author.id}> Missing name and region.`);
-      return setTimeout(() => { m.delete().catch(()=>{}); msg.delete().catch(()=>{}); }, 3000);
+      return setTimeout(() => { m.delete().catch(() => {}); msg.delete().catch(() => {}); }, 3000);
     }
     const clan = `${region.toUpperCase()}»${name.toUpperCase()}`;
     if (data.clans.delete(clan)) {
       await updateKosList(msg.channel, 'clans');
       const m = await msg.channel.send(`<@${msg.author.id}> Removed clan ${clan}`);
-      return setTimeout(() => { m.delete().catch(()=>{}); msg.delete().catch(()=>{}); }, 3000);
+      return setTimeout(() => { m.delete().catch(() => {}); msg.delete().catch(() => {}); }, 3000);
     }
   }
 
   // ---------- Priority commands ----------
-  if (['^p','^pr','^pa'].includes(cmd)) {
+  if (['^p', '^pr', '^pa'].includes(cmd)) {
     if (!canUsePriority(msg)) {
       const m = await msg.channel.send(`<@${msg.author.id}> You cannot use priority commands.`);
-      return setTimeout(() => { m.delete().catch(()=>{}); msg.delete().catch(()=>{}); }, 3000);
+      return setTimeout(() => { m.delete().catch(() => {}); msg.delete().catch(() => {}); }, 3000);
     }
 
-    // ^pa enforces only name
     if (cmd === '^pa') {
       const [name, username] = args;
       if (!name) {
         const m = await msg.channel.send(`<@${msg.author.id}> Missing name.`);
-        return setTimeout(() => { m.delete().catch(()=>{}); msg.delete().catch(()=>{}); }, 3000);
+        return setTimeout(() => { m.delete().catch(() => {}); msg.delete().catch(() => {}); }, 3000);
       }
-
       const key = username || name;
       if (data.players.has(key)) {
         const m = await msg.channel.send(`<@${msg.author.id}> Player already exists: ${key}`);
-        return setTimeout(() => { m.delete().catch(()=>{}); msg.delete().catch(()=>{}); }, 3000);
+        return setTimeout(() => { m.delete().catch(() => {}); msg.delete().catch(() => {}); }, 3000);
       }
-
       data.players.set(key, { name, username, addedBy: msg.author.id });
       data.priority.add(key);
       await updateKosList(msg.channel, 'players');
       await updateKosList(msg.channel, 'priority');
       const m = await msg.channel.send(`<@${msg.author.id}> Added ${key} directly to priority`);
-      return setTimeout(() => { m.delete().catch(()=>{}); msg.delete().catch(()=>{}); }, 3000);
+      return setTimeout(() => { m.delete().catch(() => {}); msg.delete().catch(() => {}); }, 3000);
     }
 
     const [identifier] = args;
     if (!identifier) {
       const m = await msg.channel.send(`<@${msg.author.id}> Missing name.`);
-      return setTimeout(() => { m.delete().catch(()=>{}); msg.delete().catch(()=>{}); }, 3000);
+      return setTimeout(() => { m.delete().catch(() => {}); msg.delete().catch(() => {}); }, 3000);
     }
 
     const player = data.players.get(identifier) || [...data.players.values()].find(p => p.name.toLowerCase() === identifier.toLowerCase());
     if (!player) {
       const m = await msg.channel.send(`<@${msg.author.id}> Player not found.`);
-      return setTimeout(() => { m.delete().catch(()=>{}); msg.delete().catch(()=>{}); }, 3000);
+      return setTimeout(() => { m.delete().catch(() => {}); msg.delete().catch(() => {}); }, 3000);
     }
 
     if (cmd === '^p') {
@@ -418,13 +399,13 @@ client.on('messageCreate', async msg => {
       await updateKosList(msg.channel, 'players');
       await updateKosList(msg.channel, 'priority');
       const m = await msg.channel.send(`<@${msg.author.id}> Promoted ${player.username || player.name} to priority`);
-      return setTimeout(() => { m.delete().catch(()=>{}); msg.delete().catch(()=>{}); }, 3000);
+      return setTimeout(() => { m.delete().catch(() => {}); msg.delete().catch(() => {}); }, 3000);
     } else if (cmd === '^pr') {
       data.priority.delete(player.username || player.name);
       await updateKosList(msg.channel, 'players');
       await updateKosList(msg.channel, 'priority');
       const m = await msg.channel.send(`<@${msg.author.id}> Removed ${player.username || player.name} from priority`);
-      return setTimeout(() => { m.delete().catch(()=>{}); msg.delete().catch(()=>{}); }, 3000);
+      return setTimeout(() => { m.delete().catch(() => {}); msg.delete().catch(() => {}); }, 3000);
     }
   }
 });
@@ -435,14 +416,13 @@ client.on('interactionCreate', async i => {
   if (i.user.id !== OWNER_ID) return;
 
   if (i.commandName === 'panel') {
-    await i.deferReply({ flags: 64 }); // 64 = ephemeral
+    await i.deferReply({ flags: 64 });
     await updatePanel(i.channel);
     await i.editReply({ content: 'Panel updated.' });
   }
   if (i.commandName === 'list') {
-    // Reply immediately to avoid timeout, then create list
-    await i.reply({ content: 'Creating KOS list...', flags: 64 }); // 64 = ephemeral
-    await updateKosList(i.channel, null, true); // forceCreate = true
+    await i.reply({ content: 'Creating KOS list...', flags: 64 });
+    await updateKosList(i.channel, null, true);
     await i.editReply({ content: 'KOS list created.' });
   }
 });
