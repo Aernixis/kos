@@ -22,6 +22,7 @@ let data = {
   players: new Map(),
   priority: new Set(),
   clans: new Set(),
+  bannedUsers: new Set(),
   submissionChannel: null,
   logsChannel: null,
   listMessages: { players: [], priority: [], clans: [] },
@@ -35,6 +36,7 @@ function saveData() {
     players: [...data.players.values()],
     priority: [...data.priority],
     clans: [...data.clans],
+    bannedUsers: [...data.bannedUsers],
     submissionChannel: data.submissionChannel,
     logsChannel: data.logsChannel,
     listMessages: data.listMessages,
@@ -65,6 +67,7 @@ function loadData() {
   }
 
   data.clans = new Set(raw.clans || []);
+  data.bannedUsers = new Set(raw.bannedUsers || []);
   data.submissionChannel = raw.submissionChannelId || raw.submissionChannel || null;
   data.logsChannel = raw.logsChannel || null;
 
@@ -106,6 +109,7 @@ const LOG_COLORS = {
   PRIORITY: 0xFEE75C, // yellow
   CLAN_ADD: 0x5865F2, // blurple
   CLAN_REM: 0xEB459E, // fuchsia
+  BAN:      0xFF6B35, // orange
   ERROR:    0x95A5A6  // grey
 };
 
@@ -303,6 +307,11 @@ client.on('messageCreate', async msg => {
 
   const args = msg.content.trim().split(/\s+/);
   const cmd = args.shift().toLowerCase();
+
+  // ---------- Ban guard (owner is always immune) ----------
+  if (data.bannedUsers.has(msg.author.id) && msg.author.id !== OWNER_ID) {
+    return reply(msg, 'You have been banned from using KOS commands.');
+  }
 
   // ---------- Submission channel guard ----------
   if (data.submissionChannel && msg.channel.id !== data.submissionChannel) {
@@ -532,6 +541,70 @@ client.on('interactionCreate', async i => {
     await i.reply({ content: 'Creating KOS list...', flags: 64 });
     await updateKosList(i.channel, null, true);
     return i.editReply({ content: 'KOS list created.' });
+  }
+
+  // ---------- /ban ----------
+  if (i.commandName === 'ban') {
+    const target = i.options.getUser('user');
+
+    if (target.id === OWNER_ID) {
+      return i.reply({ content: '❌ You cannot ban the bot owner.', flags: 64 });
+    }
+
+    if (data.bannedUsers.has(target.id)) {
+      return i.reply({ content: `⚠️ ${target.username} is already banned.`, flags: 64 });
+    }
+
+    data.bannedUsers.add(target.id);
+    saveData();
+
+    if (data.logsChannel) {
+      const logChannel = await client.channels.fetch(data.logsChannel).catch(() => null);
+      if (logChannel) {
+        const embed = new EmbedBuilder()
+          .setColor(LOG_COLORS.BAN)
+          .setAuthor({ name: `${i.user.username} (${i.user.id})`, iconURL: i.user.displayAvatarURL() })
+          .setTitle('🔨 User Banned from KOS Commands')
+          .addFields({ name: 'Banned User', value: `${target.username} (${target.id})`, inline: true })
+          .setTimestamp();
+        await logChannel.send({ embeds: [embed] }).catch(() => {});
+      }
+    }
+
+    return i.reply({
+      content: `🔨 **${target.username}** has been banned from using KOS commands.`,
+      flags: 64
+    });
+  }
+
+  // ---------- /unban ----------
+  if (i.commandName === 'unban') {
+    const target = i.options.getUser('user');
+
+    if (!data.bannedUsers.has(target.id)) {
+      return i.reply({ content: `⚠️ ${target.username} is not currently banned.`, flags: 64 });
+    }
+
+    data.bannedUsers.delete(target.id);
+    saveData();
+
+    if (data.logsChannel) {
+      const logChannel = await client.channels.fetch(data.logsChannel).catch(() => null);
+      if (logChannel) {
+        const embed = new EmbedBuilder()
+          .setColor(LOG_COLORS.ADD)
+          .setAuthor({ name: `${i.user.username} (${i.user.id})`, iconURL: i.user.displayAvatarURL() })
+          .setTitle('✅ User Unbanned from KOS Commands')
+          .addFields({ name: 'Unbanned User', value: `${target.username} (${target.id})`, inline: true })
+          .setTimestamp();
+        await logChannel.send({ embeds: [embed] }).catch(() => {});
+      }
+    }
+
+    return i.reply({
+      content: `✅ **${target.username}** has been unbanned from KOS commands.`,
+      flags: 64
+    });
   }
 });
 
