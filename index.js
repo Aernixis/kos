@@ -342,7 +342,8 @@ client.on('messageCreate', async msg => {
 
     await sendLog(msg, '✅ Player Added', LOG_COLORS.ADD, [
       { name: 'Name', value: name, inline: true },
-      { name: 'Username', value: username, inline: true }
+      { name: 'Username', value: username, inline: true },
+      { name: 'Result', value: 'Added to KOS list', inline: false }
     ]);
 
     return reply(msg, `Added ${name} (${username})`);
@@ -380,7 +381,8 @@ client.on('messageCreate', async msg => {
 
     await sendLog(msg, '🗑️ Player Removed', LOG_COLORS.REMOVE, [
       { name: 'Name', value: player.name, inline: true },
-      { name: 'Username', value: player.username || 'N/A', inline: true }
+      { name: 'Username', value: player.username || 'N/A', inline: true },
+      { name: 'Result', value: 'Removed from KOS list', inline: false }
     ]);
 
     return reply(msg, `Removed ${removed}`);
@@ -397,7 +399,8 @@ client.on('messageCreate', async msg => {
 
     if (data.clans.has(clan)) {
       await sendLog(msg, '⚠️ Add Clan — Already Exists', LOG_COLORS.ERROR, [
-        { name: 'Clan', value: clan, inline: true },
+        { name: 'Name', value: name.toUpperCase(), inline: true },
+        { name: 'Region', value: region.toUpperCase(), inline: true },
         { name: 'Result', value: 'Already on KOS list', inline: false }
       ]);
       return reply(msg, `Clan already exists: ${clan}`);
@@ -407,7 +410,9 @@ client.on('messageCreate', async msg => {
     await updateKosList(msg.channel, 'clans');
 
     await sendLog(msg, '✅ Clan Added', LOG_COLORS.CLAN_ADD, [
-      { name: 'Clan', value: clan, inline: true }
+      { name: 'Name', value: name.toUpperCase(), inline: true },
+      { name: 'Region', value: region.toUpperCase(), inline: true },
+      { name: 'Result', value: 'Clan Added to KOS list', inline: false }
     ]);
 
     return reply(msg, `Added clan ${clan}`);
@@ -426,13 +431,16 @@ client.on('messageCreate', async msg => {
       await updateKosList(msg.channel, 'clans');
 
       await sendLog(msg, '🗑️ Clan Removed', LOG_COLORS.CLAN_REM, [
-        { name: 'Clan', value: clan, inline: true }
+        { name: 'Name', value: name.toUpperCase(), inline: true },
+        { name: 'Region', value: region.toUpperCase(), inline: true },
+        { name: 'Result', value: 'Clan Removed from KOS list', inline: false }
       ]);
 
       return reply(msg, `Removed clan ${clan}`);
     } else {
       await sendLog(msg, '⚠️ Remove Clan — Not Found', LOG_COLORS.ERROR, [
-        { name: 'Clan', value: clan, inline: true },
+        { name: 'Name', value: name.toUpperCase(), inline: true },
+        { name: 'Region', value: region.toUpperCase(), inline: true },
         { name: 'Result', value: 'Clan not found', inline: false }
       ]);
       return reply(msg, `Clan not found: ${clan}`);
@@ -462,7 +470,8 @@ client.on('messageCreate', async msg => {
 
       await sendLog(msg, '⭐ Player Added to Priority (Direct)', LOG_COLORS.PRIORITY, [
         { name: 'Name', value: name, inline: true },
-        { name: 'Username', value: username || 'N/A', inline: true }
+        { name: 'Username', value: username || 'N/A', inline: true },
+        { name: 'Result', value: 'Added directly to Priority', inline: false }
       ]);
 
       return reply(msg, `Added ${key} directly to priority`);
@@ -483,7 +492,8 @@ client.on('messageCreate', async msg => {
 
       await sendLog(msg, '⭐ Player Promoted to Priority', LOG_COLORS.PRIORITY, [
         { name: 'Name', value: player.name, inline: true },
-        { name: 'Username', value: player.username || 'N/A', inline: true }
+        { name: 'Username', value: player.username || 'N/A', inline: true },
+        { name: 'Result', value: 'Promoted to Priority', inline: false }
       ]);
 
       return reply(msg, `Promoted ${player.username || player.name} to priority`);
@@ -496,7 +506,8 @@ client.on('messageCreate', async msg => {
 
       await sendLog(msg, '🔻 Player Removed from Priority', LOG_COLORS.REMOVE, [
         { name: 'Name', value: player.name, inline: true },
-        { name: 'Username', value: player.username || 'N/A', inline: true }
+        { name: 'Username', value: player.username || 'N/A', inline: true },
+        { name: 'Result', value: 'Removed from Priority', inline: false }
       ]);
 
       return reply(msg, `Removed ${player.username || player.name} from priority`);
