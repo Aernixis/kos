@@ -13,25 +13,26 @@ const client = new Client({
 });
 
 /* ===================== CONSTANTS ===================== */
-const OWNER_ID = '1283217337084018749';
-const PRIORITY_ROLE_ID = '1412837397607092405';
-const DATA_FILE = './data.json';
+const OWNER_ID          = '1283217337084018749';
+const PRIORITY_ROLE_ID  = '1412837397607092405';
+const DATA_FILE         = './data.json';
 
 /* ===================== DATA ===================== */
 let data = {
-  players: new Map(),
-  priority: new Set(),
-  clans: new Set(),
-  bannedUsers: new Set(),
+  players:           new Map(),
+  priority:          new Set(),
+  clans:             new Set(),
+  bannedUsers:       new Set(),
   submissionChannel: null,
-  logsChannel: null,
-  backupChannel: null,        // set via /backup command
-  listMessages: { players: [], priority: [], clans: [] },
-  panelMessages: { gif: null, tutorial: null },
-  revision: 0
+  logsChannel:       null,
+  backupChannel:     null,   // channel ID where data.json is stored
+  backupMessageId:   null,   // ID of the single backup message we always edit
+  listMessages:      { players: [], priority: [], clans: [] },
+  panelMessages:     { gif: null, tutorial: null },
+  revision:          0
 };
 
-/* ===================== LOAD / SAVE ===================== */
+/* ===================== SAVE / LOAD ===================== */
 
 function buildPayload() {
   return JSON.stringify({
@@ -42,6 +43,7 @@ function buildPayload() {
     submissionChannel: data.submissionChannel,
     logsChannel:       data.logsChannel,
     backupChannel:     data.backupChannel,
+    backupMessageId:   data.backupMessageId,
     listMessages:      data.listMessages,
     panelMessages:     data.panelMessages,
     revision:          data.revision
@@ -61,11 +63,12 @@ function parseRaw(raw) {
   if (raw.topPriority) raw.topPriority.forEach(u => { if (u) data.priority.add(u); });
   if (raw.priority)    raw.priority.forEach(u => { if (u) data.priority.add(u); });
 
-  data.clans           = new Set(raw.clans       || []);
-  data.bannedUsers     = new Set(raw.bannedUsers || []);
+  data.clans             = new Set(raw.clans       || []);
+  data.bannedUsers       = new Set(raw.bannedUsers || []);
   data.submissionChannel = raw.submissionChannelId || raw.submissionChannel || null;
-  data.logsChannel       = raw.logsChannel   || null;
-  data.backupChannel     = raw.backupChannel || process.env.BACKUP_CHANNEL_ID || null;
+  data.logsChannel       = raw.logsChannel       || null;
+  data.backupChannel     = raw.backupChannel     || process.env.BACKUP_CHANNEL_ID || null;
+  data.backupMessageId   = raw.backupMessageId   || null;
 
   if (raw.messages || raw.listMessages) {
     const msgs = raw.messages || raw.listMessages;
@@ -80,37 +83,62 @@ function parseRaw(raw) {
   data.revision      = raw.revision      || 0;
 }
 
-// Debounced save: waits 1 s after last call before flushing,
-// so rapid sequential commands only produce one save/upload.
+/**
+ * Push current data to the backup channel.
+ * Always edits the single pinned backup message; only sends a new one if none exists yet.
+ * Also writes local data.json as a fast cache.
+ */
+async function pushBackup() {
+  const payload    = buildPayload();
+
+  // Write local cache
+  try { fs.writeFileSync(DATA_FILE, payload); } catch (e) { console.error('[Backup] Local write failed:', e.message); }
+
+  if (!data.backupChannel) return;
+
+  try {
+    const ch = await client.channels.fetch(data.backupChannel).catch(() => null);
+    if (!ch) return;
+
+    const buf        = Buffer.from(payload, 'utf8');
+    const attachment = new AttachmentBuilder(buf, { name: 'data.json' });
+    const content    = `💾 Last save: <t:${Math.floor(Date.now() / 1000)}:F>`;
+
+    if (data.backupMessageId) {
+      // Try to edit the existing message
+      const existing = await ch.messages.fetch(data.backupMessageId).catch(() => null);
+      if (existing) {
+        await existing.edit({ content, files: [attachment] });
+        // Re-write local cache with updated backupMessageId (unchanged, but keep in sync)
+        fs.writeFileSync(DATA_FILE, buildPayload());
+        return;
+      }
+    }
+
+    // No existing message — send a new one and remember its ID
+    const sent = await ch.send({ content, files: [attachment] });
+    data.backupMessageId = sent.id;
+    // Write again so the new message ID is persisted locally
+    fs.writeFileSync(DATA_FILE, buildPayload());
+  } catch (e) {
+    console.error('[Backup] Discord push failed:', e.message);
+  }
+}
+
+// Debounced save: coalesces rapid sequential changes into one backup push
 let _saveTimer = null;
 function saveData() {
   if (_saveTimer) clearTimeout(_saveTimer);
-  _saveTimer = setTimeout(async () => {
-    const payload = buildPayload();
-
-    // Always write local file as a fast cache
-    try { fs.writeFileSync(DATA_FILE, payload); } catch (e) { console.error('[Save] Local write failed:', e.message); }
-
-    // Push to Discord backup channel
-    if (data.backupChannel) {
-      try {
-        const ch = await client.channels.fetch(data.backupChannel).catch(() => null);
-        if (ch) {
-          const buf        = Buffer.from(payload, 'utf8');
-          const attachment = new AttachmentBuilder(buf, { name: 'data.json' });
-          await ch.send({
-            content: `💾 Backup — <t:${Math.floor(Date.now() / 1000)}:F>`,
-            files: [attachment]
-          });
-        }
-      } catch (e) { console.error('[Save] Discord backup failed:', e.message); }
-    }
-  }, 1000);
+  _saveTimer = setTimeout(() => pushBackup(), 1000);
 }
 
-// On boot: local file first (fast), fall back to Discord backup channel
+/**
+ * On boot:
+ * 1. Try local data.json (fast path — survives in-process restarts)
+ * 2. Fall back to the backup channel attachment
+ */
 async function loadData() {
-  // 1. Try local file
+  // 1. Local file
   if (fs.existsSync(DATA_FILE)) {
     try {
       const raw = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
@@ -118,20 +146,20 @@ async function loadData() {
       console.log('[Load] Loaded from local data.json');
       return;
     } catch (e) {
-      console.warn('[Load] Local file corrupt, falling back to Discord…', e.message);
+      console.warn('[Load] Local file corrupt, trying Discord backup…', e.message);
     }
   }
 
-  // 2. Fall back to Discord backup channel
+  // 2. Discord backup channel
   const channelId = process.env.BACKUP_CHANNEL_ID;
   if (!channelId) {
-    console.warn('[Load] No local file and no BACKUP_CHANNEL_ID set. Starting fresh.');
+    console.warn('[Load] No BACKUP_CHANNEL_ID env var and no local file. Starting fresh.');
     return;
   }
 
   try {
     const ch       = await client.channels.fetch(channelId);
-    const messages = await ch.messages.fetch({ limit: 50 });
+    const messages = await ch.messages.fetch({ limit: 20 });
     const backupMsg = messages.find(m => m.attachments.some(a => a.name === 'data.json'));
 
     if (!backupMsg) {
@@ -141,14 +169,15 @@ async function loadData() {
     }
 
     const att = backupMsg.attachments.find(a => a.name === 'data.json');
-    const res = await fetch(att.url);
-    const raw = await res.json();
+    const res  = await fetch(att.url);
+    const raw  = await res.json();
     parseRaw(raw);
-    data.backupChannel = channelId;
+    data.backupChannel   = channelId;
+    data.backupMessageId = backupMsg.id;
     console.log(`[Load] Loaded from Discord backup (msg ${backupMsg.id})`);
 
-    // Cache locally so next boot is instant
-    fs.writeFileSync(DATA_FILE, JSON.stringify(raw, null, 2));
+    // Cache locally
+    fs.writeFileSync(DATA_FILE, buildPayload());
   } catch (e) {
     console.error('[Load] Discord backup load failed:', e.message);
   }
@@ -171,10 +200,7 @@ async function reply(msg, text, ms = 3000) {
 }
 
 /**
- * Finds a player by:
- * 1. Display name (p.name) — case-insensitive
- * 2. Username (p.username) — case-insensitive
- * 3. Orphaned priority entry (in priority but not in players map)
+ * Find a player by display name first, then username, then orphaned priority entry.
  */
 function findPlayer(identifier) {
   const id = identifier.toLowerCase();
@@ -295,7 +321,6 @@ async function updateKosList(channel, sectionToUpdate = null, forceCreate = fals
       data.listMessages[key] = newMessages;
     } else {
       const storedIds = data.listMessages[key] || [];
-
       if (storedIds.length > 0) {
         for (let i = 0; i < Math.max(chunks.length, storedIds.length); i++) {
           if (i < storedIds.length) {
@@ -459,9 +484,9 @@ client.on('messageCreate', async msg => {
     await updateKosList(msg.channel, 'priority');
 
     await sendLog(msg, '🗑️ Player Removed', LOG_COLORS.REMOVE, [
-      { name: 'Name',     value: player.name,                inline: true },
-      { name: 'Username', value: player.username || 'N/A',   inline: true },
-      { name: 'Result',   value: 'Removed from KOS list',    inline: false }
+      { name: 'Name',     value: player.name,              inline: true },
+      { name: 'Username', value: player.username || 'N/A', inline: true },
+      { name: 'Result',   value: 'Removed from KOS list',  inline: false }
     ]);
     return reply(msg, `Removed ${removed}`);
   }
@@ -522,7 +547,6 @@ client.on('messageCreate', async msg => {
   if (['^p', '^pr', '^pa'].includes(cmd)) {
     if (!canUsePriority(msg)) return reply(msg, 'You cannot use priority commands.');
 
-    // ^pa — add directly to priority
     if (cmd === '^pa') {
       const [name, username] = args;
       if (!name) return reply(msg, 'Missing name.');
@@ -530,7 +554,6 @@ client.on('messageCreate', async msg => {
 
       const duplicate = data.players.has(key)
         || [...data.players.values()].find(p => p.name.toLowerCase() === name.toLowerCase());
-
       if (duplicate) return reply(msg, `Player already exists: ${key}`);
 
       data.players.set(key, { name, username, addedBy: msg.author.id });
@@ -539,7 +562,7 @@ client.on('messageCreate', async msg => {
       await updateKosList(msg.channel, 'priority');
 
       await sendLog(msg, '⭐ Player Added to Priority (Direct)', LOG_COLORS.PRIORITY, [
-        { name: 'Name',     value: name,             inline: true },
+        { name: 'Name',     value: name,              inline: true },
         { name: 'Username', value: username || 'N/A', inline: true },
         { name: 'Result',   value: 'Added directly to Priority', inline: false }
       ]);
@@ -600,29 +623,62 @@ client.on('interactionCreate', async i => {
   if (i.commandName === 'logs') {
     data.logsChannel = i.channel.id;
     saveData();
-    return i.reply({ content: `✅ KOS command logs will be sent to <#${i.channel.id}>`, flags: 64 });
+    return i.reply({ content: `✅ KOS logs will be sent to <#${i.channel.id}>`, flags: 64 });
   }
 
   // ---------- /backup ----------
-  // Run this once in your private backup channel to register it
+  // Run once in your private backup channel to register it
   if (i.commandName === 'backup') {
-    data.backupChannel = i.channel.id;
-    saveData();
-    return i.reply({ content: `✅ Data will be backed up to <#${i.channel.id}> after every change.`, flags: 64 });
+    data.backupChannel   = i.channel.id;
+    data.backupMessageId = null; // reset so a fresh message is created in this channel
+    await pushBackup();
+    return i.reply({ content: `✅ Backup channel set to <#${i.channel.id}>. Data saved.`, flags: 64 });
+  }
+
+  // ---------- /save ----------
+  if (i.commandName === 'save') {
+    await i.deferReply({ flags: 64 });
+    await pushBackup();
+    return i.editReply({ content: '✅ List manually saved to backup channel.' });
+  }
+
+  // ---------- /list ----------
+  // Loads data fresh from the backup channel attachment, then posts the list
+  if (i.commandName === 'list') {
+    await i.deferReply({ flags: 64 });
+
+    if (!data.backupChannel) {
+      return i.editReply({ content: '❌ No backup channel set. Use `/backup` first.' });
+    }
+
+    try {
+      const ch       = await client.channels.fetch(data.backupChannel);
+      const messages = await ch.messages.fetch({ limit: 20 });
+      const backupMsg = messages.find(m => m.attachments.some(a => a.name === 'data.json'));
+
+      if (!backupMsg) {
+        return i.editReply({ content: '❌ No backup found in the backup channel. Use `/save` first.' });
+      }
+
+      const att = backupMsg.attachments.find(a => a.name === 'data.json');
+      const res  = await fetch(att.url);
+      const raw  = await res.json();
+      parseRaw(raw);
+      console.log(`[/list] Reloaded data from backup msg ${backupMsg.id}`);
+    } catch (e) {
+      console.error('[/list] Failed to reload from backup:', e.message);
+      return i.editReply({ content: '❌ Failed to load from backup channel.' });
+    }
+
+    await updateKosList(i.channel, null, true);
+    return i.editReply({ content: '✅ KOS list created from latest backup.' });
   }
 
   // ---------- /panel ----------
   if (i.commandName === 'panel') {
     await i.deferReply({ flags: 64 });
     await updatePanel(i.channel);
-    return i.editReply({ content: 'Panel updated.' });
-  }
-
-  // ---------- /list ----------
-  if (i.commandName === 'list') {
-    await i.reply({ content: 'Creating KOS list...', flags: 64 });
-    await updateKosList(i.channel, null, true);
-    return i.editReply({ content: 'KOS list created.' });
+    return i.editReply({ content: '✅ Panel updated.' });
   }
 
   // ---------- /say ----------
@@ -642,15 +698,16 @@ client.on('interactionCreate', async i => {
     saveData();
 
     if (data.logsChannel) {
-      const logChannel = await client.channels.fetch(data.logsChannel).catch(() => null);
-      if (logChannel) {
-        const embed = new EmbedBuilder()
-          .setColor(LOG_COLORS.BAN)
-          .setAuthor({ name: `${i.user.username} (${i.user.id})`, iconURL: i.user.displayAvatarURL() })
-          .setTitle('🔨 User Banned from KOS Commands')
-          .addFields({ name: 'Banned User', value: `${target.username} (${target.id})`, inline: true })
-          .setTimestamp();
-        await logChannel.send({ embeds: [embed] }).catch(() => {});
+      const logCh = await client.channels.fetch(data.logsChannel).catch(() => null);
+      if (logCh) {
+        await logCh.send({ embeds: [
+          new EmbedBuilder()
+            .setColor(LOG_COLORS.BAN)
+            .setAuthor({ name: `${i.user.username} (${i.user.id})`, iconURL: i.user.displayAvatarURL() })
+            .setTitle('🔨 User Banned from KOS Commands')
+            .addFields({ name: 'Banned User', value: `${target.username} (${target.id})`, inline: true })
+            .setTimestamp()
+        ]}).catch(() => {});
       }
     }
     return i.reply({ content: `🔨 **${target.username}** has been banned from using KOS commands.`, flags: 64 });
@@ -665,15 +722,16 @@ client.on('interactionCreate', async i => {
     saveData();
 
     if (data.logsChannel) {
-      const logChannel = await client.channels.fetch(data.logsChannel).catch(() => null);
-      if (logChannel) {
-        const embed = new EmbedBuilder()
-          .setColor(LOG_COLORS.ADD)
-          .setAuthor({ name: `${i.user.username} (${i.user.id})`, iconURL: i.user.displayAvatarURL() })
-          .setTitle('✅ User Unbanned from KOS Commands')
-          .addFields({ name: 'Unbanned User', value: `${target.username} (${target.id})`, inline: true })
-          .setTimestamp();
-        await logChannel.send({ embeds: [embed] }).catch(() => {});
+      const logCh = await client.channels.fetch(data.logsChannel).catch(() => null);
+      if (logCh) {
+        await logCh.send({ embeds: [
+          new EmbedBuilder()
+            .setColor(LOG_COLORS.ADD)
+            .setAuthor({ name: `${i.user.username} (${i.user.id})`, iconURL: i.user.displayAvatarURL() })
+            .setTitle('✅ User Unbanned from KOS Commands')
+            .addFields({ name: 'Unbanned User', value: `${target.username} (${target.id})`, inline: true })
+            .setTimestamp()
+        ]}).catch(() => {});
       }
     }
     return i.reply({ content: `✅ **${target.username}** has been unbanned from KOS commands.`, flags: 64 });
@@ -681,18 +739,16 @@ client.on('interactionCreate', async i => {
 });
 
 /* ===================== AUTO-SAVE EVERY 10 HOURS ===================== */
-const TEN_HOURS = 10 * 60 * 60 * 1000;
 setInterval(() => {
-  saveData();
+  pushBackup();
   console.log(`[AutoSave] Triggered at ${new Date().toISOString()}`);
-}, TEN_HOURS);
+}, 10 * 60 * 60 * 1000);
 
 /* ===================== DUMMY SERVER FOR RENDER ===================== */
 const PORT = process.env.PORT || 3000;
 require('http').createServer((req, res) => res.end('Bot running')).listen(PORT);
 
 /* ===================== LOGIN + LOAD ===================== */
-// We must wait for the client to be ready before fetching channels for loadData
 client.once('ready', async () => {
   console.log(`[Bot] Logged in as ${client.user.tag}`);
   await loadData();
