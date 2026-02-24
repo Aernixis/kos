@@ -32,19 +32,66 @@ let data = {
   revision:          0
 };
 
-/* ===================== USERNAME HELPER ===================== */
-// Treat empty string, "N/A", null, undefined as "no username"
+/* ===================== HELPERS ===================== */
+function canUsePriority(msg) {
+  if (msg.author.id === OWNER_ID) return true;
+  return msg.member?.roles.cache.has(PRIORITY_ROLE_ID);
+}
+
+function rev() {
+  data.revision++;
+  return '\u200B'.repeat((data.revision % 10) + 1);
+}
+
+async function reply(msg, text, ms = 3000) {
+  const m = await msg.channel.send(`<@${msg.author.id}> ${text}`);
+  setTimeout(() => { m.delete().catch(() => {}); msg.delete().catch(() => {}); }, ms);
+}
+
+// Treat empty string, "N/A", null, undefined as no username
 function cleanUsername(u) {
   if (!u || u.trim() === '' || u === 'N/A') return null;
   return u.trim();
 }
 
+// The map key for a player
 function playerKey(p) {
   return cleanUsername(p.username) || p.name;
 }
 
+// Case-insensitive alphabetical comparator
+const alpha = (a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' });
+
+// Sort all data in memory alphabetically so data.json backup is always clean
+function sortData() {
+  const sortedPlayers = [...data.players.values()]
+    .sort((a, b) => alpha(a.name, b.name));
+  data.players = new Map(sortedPlayers.map(p => [playerKey(p), p]));
+
+  const sortedPriority = [...data.priority].sort((a, b) => {
+    const pa = [...data.players.values()].find(p => playerKey(p).toLowerCase() === a.toLowerCase());
+    const pb = [...data.players.values()].find(p => playerKey(p).toLowerCase() === b.toLowerCase());
+    return alpha(pa ? pa.name : a, pb ? pb.name : b);
+  });
+  data.priority = new Set(sortedPriority);
+
+  data.clans = new Set([...data.clans].sort((a, b) => alpha(a, b)));
+}
+
+function findPlayer(identifier) {
+  const id = identifier.toLowerCase();
+  const byName     = [...data.players.values()].find(p => p.name.toLowerCase() === id);
+  if (byName) return byName;
+  const byUsername = [...data.players.values()].find(p => p.username && p.username.toLowerCase() === id);
+  if (byUsername) return byUsername;
+  const priorityKey = [...data.priority].find(k => k.toLowerCase() === id);
+  if (priorityKey) return { name: priorityKey, username: null, addedBy: null, _orphaned: true };
+  return null;
+}
+
 /* ===================== BUILD / PARSE ===================== */
 function buildPayload() {
+  sortData(); // always sort before saving so backup is alphabetical
   return JSON.stringify({
     players: [...data.players.values()].map(p => ({
       name:     p.name,
@@ -96,22 +143,16 @@ function parseRaw(raw) {
 
   data.panelMessages = raw.panelMessages || data.panelMessages;
   data.revision      = raw.revision      || 0;
+
+  sortData(); // sort immediately after loading
 }
 
 /* ===================== SAVE / LOAD ===================== */
-
-/**
- * Push current in-memory data to:
- * 1. Local data.json
- * 2. Discord backup channel (edit existing message, or send new one)
- */
 async function pushBackup() {
   const payload = buildPayload();
 
-  // 1. Write local file
   try { fs.writeFileSync(DATA_FILE, payload); } catch (e) { console.error('[Backup] Local write failed:', e.message); }
 
-  // 2. Push to Discord
   if (!data.backupChannel) return;
   try {
     const ch = await client.channels.fetch(data.backupChannel).catch(() => null);
@@ -119,7 +160,7 @@ async function pushBackup() {
 
     const buf        = Buffer.from(payload, 'utf8');
     const attachment = new AttachmentBuilder(buf, { name: 'data.json' });
-    const content    = `💾 Last save: <t:${Math.floor(Date.now() / 1000)}:F>`;
+    const content    = `Last save: <t:${Math.floor(Date.now() / 1000)}:F>`;
 
     if (data.backupMessageId) {
       const existing = await ch.messages.fetch(data.backupMessageId).catch(() => null);
@@ -129,22 +170,18 @@ async function pushBackup() {
       }
     }
 
-    // No existing message — send new
     const sent = await ch.send({ content, files: [attachment] });
     data.backupMessageId = sent.id;
-    // Re-write local so the new message ID is persisted
     fs.writeFileSync(DATA_FILE, buildPayload());
   } catch (e) { console.error('[Backup] Discord push failed:', e.message); }
 }
 
-// Debounced: coalesces rapid changes into one push
 let _saveTimer = null;
 function saveData() {
   if (_saveTimer) clearTimeout(_saveTimer);
   _saveTimer = setTimeout(() => pushBackup(), 1000);
 }
 
-// On boot: local file first, fall back to Discord backup channel
 async function loadData() {
   if (fs.existsSync(DATA_FILE)) {
     try {
@@ -169,7 +206,7 @@ async function loadData() {
     const backupMsg = messages.find(m => m.attachments.some(a => a.name === 'data.json'));
 
     if (!backupMsg) {
-      console.warn('[Load] No backup found in Discord channel. Starting fresh.');
+      console.warn('[Load] No backup found. Starting fresh.');
       data.backupChannel = channelId;
       return;
     }
@@ -183,33 +220,6 @@ async function loadData() {
     console.log(`[Load] Loaded from Discord backup (msg ${backupMsg.id})`);
     fs.writeFileSync(DATA_FILE, buildPayload());
   } catch (e) { console.error('[Load] Discord load failed:', e.message); }
-}
-
-/* ===================== HELPERS ===================== */
-function canUsePriority(msg) {
-  if (msg.author.id === OWNER_ID) return true;
-  return msg.member?.roles.cache.has(PRIORITY_ROLE_ID);
-}
-
-function rev() {
-  data.revision++;
-  return '\u200B'.repeat((data.revision % 10) + 1);
-}
-
-async function reply(msg, text, ms = 3000) {
-  const m = await msg.channel.send(`<@${msg.author.id}> ${text}`);
-  setTimeout(() => { m.delete().catch(() => {}); msg.delete().catch(() => {}); }, ms);
-}
-
-function findPlayer(identifier) {
-  const id = identifier.toLowerCase();
-  const byName     = [...data.players.values()].find(p => p.name.toLowerCase() === id);
-  if (byName) return byName;
-  const byUsername = [...data.players.values()].find(p => p.username && p.username.toLowerCase() === id);
-  if (byUsername) return byUsername;
-  const priorityKey = [...data.priority].find(k => k.toLowerCase() === id);
-  if (priorityKey) return { name: priorityKey, username: null, addedBy: null, _orphaned: true };
-  return null;
 }
 
 /* ===================== LOGGER ===================== */
@@ -241,23 +251,30 @@ async function sendLog(msg, action, color, fields) {
 function formatPlayers() {
   const rows = [...data.players.values()]
     .filter(p => !data.priority.has(playerKey(p)))
-    .sort((a, b) => a.name.localeCompare(b.name))
+    .sort((a, b) => alpha(a.name, b.name))
     .map(p => `${p.name} : ${p.username || 'N/A'}`);
   return rows.length ? rows.join('\n') : 'None';
 }
 
 function formatPriority() {
-  const rows = [...data.priority].map(u => {
-    let p = data.players.get(u);
-    if (!p) p = [...data.players.values()].find(pl => playerKey(pl).toLowerCase() === u.toLowerCase());
-    if (!p) return u;
-    return `${p.name} : ${p.username || 'N/A'}`;
-  });
+  const rows = [...data.priority]
+    .map(u => {
+      let p = data.players.get(u);
+      if (!p) p = [...data.players.values()].find(pl => playerKey(pl).toLowerCase() === u.toLowerCase());
+      return {
+        sortKey: p ? p.name : u,
+        display: p ? `${p.name} : ${p.username || 'N/A'}` : u
+      };
+    })
+    .sort((a, b) => alpha(a.sortKey, b.sortKey))
+    .map(r => r.display);
   return rows.length ? rows.join('\n') : 'None';
 }
 
 function formatClans() {
-  return data.clans.size ? [...data.clans].sort().join('\n') : 'None';
+  return data.clans.size
+    ? [...data.clans].sort((a, b) => alpha(a, b)).join('\n')
+    : 'None';
 }
 
 /* ===================== LIST UPDATER ===================== */
@@ -292,7 +309,7 @@ async function updateKosList(channel, sectionToUpdate = null, forceCreate = fals
     if (sectionToUpdate && key !== sectionToUpdate) continue;
     if (updatingSections[key]) continue;
     updatingSections[key] = true;
-    const chunks    = splitIntoChunks(title, getContent(), rev());
+    const chunks = splitIntoChunks(title, getContent(), rev());
     if (forceCreate) {
       const newMessages = [];
       for (const chunk of chunks) {
@@ -401,7 +418,6 @@ client.on('messageCreate', async msg => {
   if (cmd === '^ka') {
     const [name, rawUsername] = args;
     if (!name) return reply(msg, 'Missing name.');
-
     const username = cleanUsername(rawUsername) || null;
     const key      = username || name;
 
@@ -570,27 +586,20 @@ client.on('interactionCreate', async i => {
   if (!i.isChatInputCommand()) return;
   if (i.user.id !== OWNER_ID) return;
 
-  // ---------- /submission ----------
   if (i.commandName === 'submission') {
     data.submissionChannel = i.channel.id;
     saveData();
     return i.reply({ content: `✅ KOS submission commands locked to <#${i.channel.id}>`, flags: 64 });
   }
 
-  // ---------- /logs ----------
   if (i.commandName === 'logs') {
     data.logsChannel = i.channel.id;
     saveData();
     return i.reply({ content: `✅ KOS logs will be sent to <#${i.channel.id}>`, flags: 64 });
   }
 
-  // ---------- /backup ----------
-  // Run this in your private backup channel.
-  // Reads current data.json from disk (the source of truth), loads it into memory, then pushes to this channel.
   if (i.commandName === 'backup') {
     await i.deferReply({ flags: 64 });
-
-    // Load from local data.json to make sure memory is fully up to date
     if (fs.existsSync(DATA_FILE)) {
       try {
         const raw = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
@@ -600,24 +609,18 @@ client.on('interactionCreate', async i => {
         console.warn('[/backup] Could not read local data.json:', e.message);
       }
     }
-
-    // Set backup channel to this channel and reset message ID so a fresh one is created
     data.backupChannel   = i.channel.id;
     data.backupMessageId = null;
-
     await pushBackup();
     return i.editReply({ content: `✅ Backup channel set to <#${i.channel.id}>. Current data.json pushed as backup.` });
   }
 
-  // ---------- /save ----------
   if (i.commandName === 'save') {
     await i.deferReply({ flags: 64 });
     await pushBackup();
     return i.editReply({ content: '✅ List manually saved to backup channel.' });
   }
 
-  // ---------- /list ----------
-  // Loads fresh from backup channel attachment, then posts the list
   if (i.commandName === 'list') {
     await i.deferReply({ flags: 64 });
     if (!data.backupChannel) {
@@ -643,21 +646,18 @@ client.on('interactionCreate', async i => {
     return i.editReply({ content: '✅ KOS list created from latest backup.' });
   }
 
-  // ---------- /panel ----------
   if (i.commandName === 'panel') {
     await i.deferReply({ flags: 64 });
     await updatePanel(i.channel);
     return i.editReply({ content: '✅ Panel updated.' });
   }
 
-  // ---------- /say ----------
   if (i.commandName === 'say') {
     const text = i.options.getString('text');
     await i.channel.send(text);
     return i.reply({ content: '✅ Message sent.', flags: 64 });
   }
 
-  // ---------- /ban ----------
   if (i.commandName === 'ban') {
     const target = i.options.getUser('user');
     if (target.id === OWNER_ID)          return i.reply({ content: '❌ You cannot ban the bot owner.', flags: 64 });
@@ -679,7 +679,6 @@ client.on('interactionCreate', async i => {
     return i.reply({ content: `🔨 **${target.username}** has been banned from using KOS commands.`, flags: 64 });
   }
 
-  // ---------- /unban ----------
   if (i.commandName === 'unban') {
     const target = i.options.getUser('user');
     if (!data.bannedUsers.has(target.id)) return i.reply({ content: `⚠️ ${target.username} is not currently banned.`, flags: 64 });
@@ -702,8 +701,6 @@ client.on('interactionCreate', async i => {
 });
 
 /* ===================== AUTO-SAVE EVERY 10 HOURS ===================== */
-// Reads the current live list messages from the submission channel,
-// then pushes the full in-memory data to the backup channel
 setInterval(async () => {
   console.log(`[AutoSave] Triggered at ${new Date().toISOString()}`);
   await pushBackup();
