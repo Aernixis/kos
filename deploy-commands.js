@@ -13,15 +13,37 @@ const commands = [
   new SlashCommandBuilder()
     .setName('panel')
     .setDescription('Post or update the KOS panel'),
+
   new SlashCommandBuilder()
     .setName('list')
     .setDescription('Post or update the KOS list'),
+
   new SlashCommandBuilder()
     .setName('submission')
     .setDescription('Set this channel as the KOS submission channel'),
+
   new SlashCommandBuilder()
     .setName('logs')
     .setDescription('Set this channel as the KOS logs channel'),
+
+  new SlashCommandBuilder()
+    .setName('backup')
+    .setDescription('Set this channel as the data backup channel'),
+
+  new SlashCommandBuilder()
+    .setName('save')
+    .setDescription('Manually save the current list to the backup channel'),
+
+  new SlashCommandBuilder()
+    .setName('say')
+    .setDescription('Make the bot send a message in this channel')
+    .addStringOption(option =>
+      option
+        .setName('text')
+        .setDescription('The message to send')
+        .setRequired(true)
+    ),
+
   new SlashCommandBuilder()
     .setName('ban')
     .setDescription('Ban a user from using KOS commands')
@@ -31,6 +53,7 @@ const commands = [
         .setDescription('The user to ban')
         .setRequired(true)
     ),
+
   new SlashCommandBuilder()
     .setName('unban')
     .setDescription('Unban a user from using KOS commands')
