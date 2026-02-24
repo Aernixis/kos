@@ -1,6 +1,6 @@
 require('dotenv').config();
 const fs = require('fs');
-const { Client, GatewayIntentBits, Partials, EmbedBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, EmbedBuilder, AttachmentBuilder } = require('discord.js');
 
 /* ===================== CLIENT ===================== */
 const client = new Client({
@@ -25,31 +25,30 @@ let data = {
   bannedUsers: new Set(),
   submissionChannel: null,
   logsChannel: null,
+  backupChannel: null,        // set via /backup command
   listMessages: { players: [], priority: [], clans: [] },
   panelMessages: { gif: null, tutorial: null },
   revision: 0
 };
 
 /* ===================== LOAD / SAVE ===================== */
-function saveData() {
-  fs.writeFileSync(DATA_FILE, JSON.stringify({
-    players: [...data.players.values()],
-    priority: [...data.priority],
-    clans: [...data.clans],
-    bannedUsers: [...data.bannedUsers],
+
+function buildPayload() {
+  return JSON.stringify({
+    players:           [...data.players.values()],
+    priority:          [...data.priority],
+    clans:             [...data.clans],
+    bannedUsers:       [...data.bannedUsers],
     submissionChannel: data.submissionChannel,
-    logsChannel: data.logsChannel,
-    listMessages: data.listMessages,
-    panelMessages: data.panelMessages,
-    revision: data.revision
-  }, null, 2));
+    logsChannel:       data.logsChannel,
+    backupChannel:     data.backupChannel,
+    listMessages:      data.listMessages,
+    panelMessages:     data.panelMessages,
+    revision:          data.revision
+  }, null, 2);
 }
 
-function loadData() {
-  if (!fs.existsSync(DATA_FILE)) return;
-
-  const raw = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-
+function parseRaw(raw) {
   data.players = new Map();
   if (raw.players) {
     raw.players.forEach(p => {
@@ -59,31 +58,101 @@ function loadData() {
   }
 
   data.priority = new Set();
-  if (raw.topPriority) {
-    raw.topPriority.forEach(u => { if (u) data.priority.add(u); });
-  }
-  if (raw.priority) {
-    raw.priority.forEach(u => { if (u) data.priority.add(u); });
-  }
+  if (raw.topPriority) raw.topPriority.forEach(u => { if (u) data.priority.add(u); });
+  if (raw.priority)    raw.priority.forEach(u => { if (u) data.priority.add(u); });
 
-  data.clans = new Set(raw.clans || []);
-  data.bannedUsers = new Set(raw.bannedUsers || []);
+  data.clans           = new Set(raw.clans       || []);
+  data.bannedUsers     = new Set(raw.bannedUsers || []);
   data.submissionChannel = raw.submissionChannelId || raw.submissionChannel || null;
-  data.logsChannel = raw.logsChannel || null;
+  data.logsChannel       = raw.logsChannel   || null;
+  data.backupChannel     = raw.backupChannel || process.env.BACKUP_CHANNEL_ID || null;
 
   if (raw.messages || raw.listMessages) {
     const msgs = raw.messages || raw.listMessages;
     data.listMessages = {
-      players: Array.isArray(msgs.players) ? msgs.players : (msgs.players ? [msgs.players] : []),
+      players:  Array.isArray(msgs.players)  ? msgs.players  : (msgs.players  ? [msgs.players]  : []),
       priority: Array.isArray(msgs.priority) ? msgs.priority : (msgs.priority ? [msgs.priority] : []),
-      clans: Array.isArray(msgs.clans) ? msgs.clans : (msgs.clans ? [msgs.clans] : [])
+      clans:    Array.isArray(msgs.clans)    ? msgs.clans    : (msgs.clans    ? [msgs.clans]    : [])
     };
   }
 
   data.panelMessages = raw.panelMessages || data.panelMessages;
-  data.revision = raw.revision || 0;
+  data.revision      = raw.revision      || 0;
 }
-loadData();
+
+// Debounced save: waits 1 s after last call before flushing,
+// so rapid sequential commands only produce one save/upload.
+let _saveTimer = null;
+function saveData() {
+  if (_saveTimer) clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(async () => {
+    const payload = buildPayload();
+
+    // Always write local file as a fast cache
+    try { fs.writeFileSync(DATA_FILE, payload); } catch (e) { console.error('[Save] Local write failed:', e.message); }
+
+    // Push to Discord backup channel
+    if (data.backupChannel) {
+      try {
+        const ch = await client.channels.fetch(data.backupChannel).catch(() => null);
+        if (ch) {
+          const buf        = Buffer.from(payload, 'utf8');
+          const attachment = new AttachmentBuilder(buf, { name: 'data.json' });
+          await ch.send({
+            content: `💾 Backup — <t:${Math.floor(Date.now() / 1000)}:F>`,
+            files: [attachment]
+          });
+        }
+      } catch (e) { console.error('[Save] Discord backup failed:', e.message); }
+    }
+  }, 1000);
+}
+
+// On boot: local file first (fast), fall back to Discord backup channel
+async function loadData() {
+  // 1. Try local file
+  if (fs.existsSync(DATA_FILE)) {
+    try {
+      const raw = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+      parseRaw(raw);
+      console.log('[Load] Loaded from local data.json');
+      return;
+    } catch (e) {
+      console.warn('[Load] Local file corrupt, falling back to Discord…', e.message);
+    }
+  }
+
+  // 2. Fall back to Discord backup channel
+  const channelId = process.env.BACKUP_CHANNEL_ID;
+  if (!channelId) {
+    console.warn('[Load] No local file and no BACKUP_CHANNEL_ID set. Starting fresh.');
+    return;
+  }
+
+  try {
+    const ch       = await client.channels.fetch(channelId);
+    const messages = await ch.messages.fetch({ limit: 50 });
+    const backupMsg = messages.find(m => m.attachments.some(a => a.name === 'data.json'));
+
+    if (!backupMsg) {
+      console.warn('[Load] No backup message found in Discord channel. Starting fresh.');
+      data.backupChannel = channelId;
+      return;
+    }
+
+    const att = backupMsg.attachments.find(a => a.name === 'data.json');
+    const res = await fetch(att.url);
+    const raw = await res.json();
+    parseRaw(raw);
+    data.backupChannel = channelId;
+    console.log(`[Load] Loaded from Discord backup (msg ${backupMsg.id})`);
+
+    // Cache locally so next boot is instant
+    fs.writeFileSync(DATA_FILE, JSON.stringify(raw, null, 2));
+  } catch (e) {
+    console.error('[Load] Discord backup load failed:', e.message);
+  }
+}
 
 /* ===================== HELPERS ===================== */
 function canUsePriority(msg) {
@@ -102,29 +171,22 @@ async function reply(msg, text, ms = 3000) {
 }
 
 /**
- * Finds a player by checking in this order:
+ * Finds a player by:
  * 1. Display name (p.name) — case-insensitive
  * 2. Username (p.username) — case-insensitive
- * 3. Orphaned priority entry (in priority set but not in players map)
- *
- * Returns the player object, or a synthetic object for orphaned priority entries.
+ * 3. Orphaned priority entry (in priority but not in players map)
  */
 function findPlayer(identifier) {
   const id = identifier.toLowerCase();
 
-  // 1. Match by display name first
   const byName = [...data.players.values()].find(p => p.name.toLowerCase() === id);
   if (byName) return byName;
 
-  // 2. Match by username
   const byUsername = [...data.players.values()].find(p => p.username && p.username.toLowerCase() === id);
   if (byUsername) return byUsername;
 
-  // 3. Orphaned priority entry (exists in priority but not in players map)
   const priorityKey = [...data.priority].find(k => k.toLowerCase() === id);
-  if (priorityKey) {
-    return { name: priorityKey, username: null, addedBy: null, _orphaned: true };
-  }
+  if (priorityKey) return { name: priorityKey, username: null, addedBy: null, _orphaned: true };
 
   return null;
 }
@@ -147,10 +209,7 @@ async function sendLog(msg, action, color, fields) {
 
   const embed = new EmbedBuilder()
     .setColor(color)
-    .setAuthor({
-      name: `${msg.author.username} (${msg.author.id})`,
-      iconURL: msg.author.displayAvatarURL()
-    })
+    .setAuthor({ name: `${msg.author.username} (${msg.author.id})`, iconURL: msg.author.displayAvatarURL() })
     .setTitle(action)
     .addFields(fields)
     .setTimestamp()
@@ -189,13 +248,12 @@ function splitIntoChunks(title, content, revMarker) {
   const MAX_LENGTH = 1900;
   const header = `\`\`\`${title}\n`;
   const footer = `\n\`\`\``;
-
-  const lines = content.split('\n');
+  const lines  = content.split('\n');
   const chunks = [];
   let currentChunk = '';
 
   for (const line of lines) {
-    const testChunk = currentChunk ? `${currentChunk}\n${line}` : line;
+    const testChunk  = currentChunk ? `${currentChunk}\n${line}` : line;
     const testLength = header.length + testChunk.length + footer.length + revMarker.length;
 
     if (testLength > MAX_LENGTH && currentChunk) {
@@ -206,10 +264,7 @@ function splitIntoChunks(title, content, revMarker) {
     }
   }
 
-  if (currentChunk) {
-    chunks.push(`${header}${currentChunk}${footer}${revMarker}`);
-  }
-
+  if (currentChunk) chunks.push(`${header}${currentChunk}${footer}${revMarker}`);
   return chunks.length ? chunks : [`${header}None${footer}${revMarker}`];
 }
 
@@ -217,9 +272,9 @@ async function updateKosList(channel, sectionToUpdate = null, forceCreate = fals
   if (!channel) return;
 
   const sections = [
-    ['players', '–––––– PLAYERS ––––––', formatPlayers],
+    ['players',  '–––––– PLAYERS ––––––',  formatPlayers],
     ['priority', '–––––– PRIORITY ––––––', formatPriority],
-    ['clans', '–––––– CLANS ––––––', formatClans]
+    ['clans',    '–––––– CLANS ––––––',    formatClans]
   ];
 
   for (const [key, title, getContent] of sections) {
@@ -227,9 +282,9 @@ async function updateKosList(channel, sectionToUpdate = null, forceCreate = fals
     if (updatingSections[key]) continue;
     updatingSections[key] = true;
 
-    const content = getContent();
+    const content   = getContent();
     const revMarker = rev();
-    const chunks = splitIntoChunks(title, content, revMarker);
+    const chunks    = splitIntoChunks(title, content, revMarker);
 
     if (forceCreate) {
       const newMessages = [];
@@ -259,7 +314,7 @@ async function updateKosList(channel, sectionToUpdate = null, forceCreate = fals
             if (m) storedIds.push(m.id);
           }
         }
-        data.listMessages[key] = storedIds.filter(id => id);
+        data.listMessages[key] = storedIds.filter(Boolean);
       }
     }
 
@@ -320,7 +375,7 @@ Thank you for being a part of YX!
     return (await channel.send({ embeds: [embed] })).id;
   }
 
-  data.panelMessages.gif = await upsert(data.panelMessages.gif, gif);
+  data.panelMessages.gif      = await upsert(data.panelMessages.gif,      gif);
   data.panelMessages.tutorial = await upsert(data.panelMessages.tutorial, info);
   saveData();
 }
@@ -333,14 +388,12 @@ client.on('messageCreate', async msg => {
   msg._handled = true;
 
   const args = msg.content.trim().split(/\s+/);
-  const cmd = args.shift().toLowerCase();
+  const cmd  = args.shift().toLowerCase();
 
-  // ---------- Ban guard ----------
   if (data.bannedUsers.has(msg.author.id) && msg.author.id !== OWNER_ID) {
     return reply(msg, 'You have been banned from using KOS commands.');
   }
 
-  // ---------- Submission channel guard ----------
   if (data.submissionChannel && msg.channel.id !== data.submissionChannel) {
     const m = await msg.channel.send(`<@${msg.author.id}> Use KOS commands in <#${data.submissionChannel}>.`);
     setTimeout(() => { m.delete().catch(() => {}); msg.delete().catch(() => {}); }, 4000);
@@ -350,19 +403,17 @@ client.on('messageCreate', async msg => {
   // ---------- ^ka ----------
   if (cmd === '^ka') {
     const [name, username] = args;
-
-    if (!name) return reply(msg, 'Missing name and username.');
+    if (!name)     return reply(msg, 'Missing name and username.');
     if (!username) return reply(msg, 'Missing username.');
 
-    // Check duplicate by username key OR display name
     const duplicate = data.players.has(username)
       || [...data.players.values()].find(p => p.name.toLowerCase() === name.toLowerCase());
 
     if (duplicate) {
       await sendLog(msg, '⚠️ Add Player — Already Exists', LOG_COLORS.ERROR, [
-        { name: 'Name', value: name, inline: true },
+        { name: 'Name',     value: name,     inline: true },
         { name: 'Username', value: username, inline: true },
-        { name: 'Result', value: 'Already on KOS list', inline: false }
+        { name: 'Result',   value: 'Already on KOS list', inline: false }
       ]);
       return reply(msg, `Player already in KOS: ${username}`);
     }
@@ -372,11 +423,10 @@ client.on('messageCreate', async msg => {
     await updateKosList(msg.channel, 'players');
 
     await sendLog(msg, '✅ Player Added', LOG_COLORS.ADD, [
-      { name: 'Name', value: name, inline: true },
+      { name: 'Name',     value: name,     inline: true },
       { name: 'Username', value: username, inline: true },
-      { name: 'Result', value: 'Added to KOS list', inline: false }
+      { name: 'Result',   value: 'Added to KOS list', inline: false }
     ]);
-
     return reply(msg, `Added ${name} (${username})`);
   }
 
@@ -385,13 +435,11 @@ client.on('messageCreate', async msg => {
     const [identifier] = args;
     if (!identifier) return reply(msg, 'Missing name.');
 
-    // display name → username → not found
     const player = findPlayer(identifier);
-
     if (!player) {
       await sendLog(msg, '⚠️ Remove Player — Not Found', LOG_COLORS.ERROR, [
         { name: 'Identifier', value: identifier, inline: true },
-        { name: 'Result', value: 'Player not found', inline: false }
+        { name: 'Result',     value: 'Player not found', inline: false }
       ]);
       return reply(msg, 'Player not found.');
     }
@@ -411,26 +459,23 @@ client.on('messageCreate', async msg => {
     await updateKosList(msg.channel, 'priority');
 
     await sendLog(msg, '🗑️ Player Removed', LOG_COLORS.REMOVE, [
-      { name: 'Name', value: player.name, inline: true },
-      { name: 'Username', value: player.username || 'N/A', inline: true },
-      { name: 'Result', value: 'Removed from KOS list', inline: false }
+      { name: 'Name',     value: player.name,                inline: true },
+      { name: 'Username', value: player.username || 'N/A',   inline: true },
+      { name: 'Result',   value: 'Removed from KOS list',    inline: false }
     ]);
-
     return reply(msg, `Removed ${removed}`);
   }
 
   // ---------- ^kca ----------
   if (cmd === '^kca') {
     const [name, region] = args;
-
-    if (!name) return reply(msg, 'Missing name and region.');
+    if (!name)   return reply(msg, 'Missing name and region.');
     if (!region) return reply(msg, 'Missing region.');
 
     const clan = `${region.toUpperCase()}»${name.toUpperCase()}`;
-
     if (data.clans.has(clan)) {
       await sendLog(msg, '⚠️ Add Clan — Already Exists', LOG_COLORS.ERROR, [
-        { name: 'Name', value: name.toUpperCase(), inline: true },
+        { name: 'Name',   value: name.toUpperCase(),   inline: true },
         { name: 'Region', value: region.toUpperCase(), inline: true },
         { name: 'Result', value: 'Already on KOS list', inline: false }
       ]);
@@ -441,36 +486,31 @@ client.on('messageCreate', async msg => {
     await updateKosList(msg.channel, 'clans');
 
     await sendLog(msg, '✅ Clan Added', LOG_COLORS.CLAN_ADD, [
-      { name: 'Name', value: name.toUpperCase(), inline: true },
+      { name: 'Name',   value: name.toUpperCase(),   inline: true },
       { name: 'Region', value: region.toUpperCase(), inline: true },
       { name: 'Result', value: 'Clan Added to KOS list', inline: false }
     ]);
-
     return reply(msg, `Added clan ${clan}`);
   }
 
   // ---------- ^kcr ----------
   if (cmd === '^kcr') {
     const [name, region] = args;
-
-    if (!name) return reply(msg, 'Missing name and region.');
+    if (!name)   return reply(msg, 'Missing name and region.');
     if (!region) return reply(msg, 'Missing region.');
 
     const clan = `${region.toUpperCase()}»${name.toUpperCase()}`;
-
     if (data.clans.delete(clan)) {
       await updateKosList(msg.channel, 'clans');
-
       await sendLog(msg, '🗑️ Clan Removed', LOG_COLORS.CLAN_REM, [
-        { name: 'Name', value: name.toUpperCase(), inline: true },
+        { name: 'Name',   value: name.toUpperCase(),   inline: true },
         { name: 'Region', value: region.toUpperCase(), inline: true },
         { name: 'Result', value: 'Clan Removed from KOS list', inline: false }
       ]);
-
       return reply(msg, `Removed clan ${clan}`);
     } else {
       await sendLog(msg, '⚠️ Remove Clan — Not Found', LOG_COLORS.ERROR, [
-        { name: 'Name', value: name.toUpperCase(), inline: true },
+        { name: 'Name',   value: name.toUpperCase(),   inline: true },
         { name: 'Region', value: region.toUpperCase(), inline: true },
         { name: 'Result', value: 'Clan not found', inline: false }
       ]);
@@ -480,24 +520,18 @@ client.on('messageCreate', async msg => {
 
   // ---------- Priority commands ----------
   if (['^p', '^pr', '^pa'].includes(cmd)) {
-    if (!canUsePriority(msg)) {
-      return reply(msg, 'You cannot use priority commands.');
-    }
+    if (!canUsePriority(msg)) return reply(msg, 'You cannot use priority commands.');
 
     // ^pa — add directly to priority
     if (cmd === '^pa') {
       const [name, username] = args;
       if (!name) return reply(msg, 'Missing name.');
-
       const key = username || name;
 
-      // Check duplicate by display name or username key
       const duplicate = data.players.has(key)
         || [...data.players.values()].find(p => p.name.toLowerCase() === name.toLowerCase());
 
-      if (duplicate) {
-        return reply(msg, `Player already exists: ${key}`);
-      }
+      if (duplicate) return reply(msg, `Player already exists: ${key}`);
 
       data.players.set(key, { name, username, addedBy: msg.author.id });
       data.priority.add(key);
@@ -505,20 +539,17 @@ client.on('messageCreate', async msg => {
       await updateKosList(msg.channel, 'priority');
 
       await sendLog(msg, '⭐ Player Added to Priority (Direct)', LOG_COLORS.PRIORITY, [
-        { name: 'Name', value: name, inline: true },
+        { name: 'Name',     value: name,             inline: true },
         { name: 'Username', value: username || 'N/A', inline: true },
-        { name: 'Result', value: 'Added directly to Priority', inline: false }
+        { name: 'Result',   value: 'Added directly to Priority', inline: false }
       ]);
-
       return reply(msg, `Added ${key} directly to priority`);
     }
 
-    // ^p and ^pr — display name → username → orphaned priority fallback
     const [identifier] = args;
     if (!identifier) return reply(msg, 'Missing name.');
 
     const player = findPlayer(identifier);
-
     if (!player) return reply(msg, 'Player not found.');
 
     if (cmd === '^p') {
@@ -528,33 +559,26 @@ client.on('messageCreate', async msg => {
       await updateKosList(msg.channel, 'priority');
 
       await sendLog(msg, '⭐ Player Promoted to Priority', LOG_COLORS.PRIORITY, [
-        { name: 'Name', value: player.name, inline: true },
+        { name: 'Name',     value: player.name,              inline: true },
         { name: 'Username', value: player.username || 'N/A', inline: true },
-        { name: 'Result', value: 'Promoted to Priority', inline: false }
+        { name: 'Result',   value: 'Promoted to Priority',   inline: false }
       ]);
-
       return reply(msg, `Promoted ${priorityKey} to priority`);
     }
 
     if (cmd === '^pr') {
       const priorityKey = player.username || player.name;
-
-      // Match the actual stored key in priority (handles casing differences)
-      const actualKey = [...data.priority].find(k => k.toLowerCase() === priorityKey.toLowerCase()) || priorityKey;
+      const actualKey   = [...data.priority].find(k => k.toLowerCase() === priorityKey.toLowerCase()) || priorityKey;
       data.priority.delete(actualKey);
 
-      // Keep the player in the players list; just remove from priority
-      if (!player._orphaned) {
-        await updateKosList(msg.channel, 'players');
-      }
+      if (!player._orphaned) await updateKosList(msg.channel, 'players');
       await updateKosList(msg.channel, 'priority');
 
       await sendLog(msg, '🔻 Player Removed from Priority', LOG_COLORS.REMOVE, [
-        { name: 'Name', value: player.name, inline: true },
+        { name: 'Name',     value: player.name,              inline: true },
         { name: 'Username', value: player.username || 'N/A', inline: true },
-        { name: 'Result', value: 'Removed from Priority', inline: false }
+        { name: 'Result',   value: 'Removed from Priority',  inline: false }
       ]);
-
       return reply(msg, `Removed ${actualKey} from priority`);
     }
   }
@@ -565,33 +589,53 @@ client.on('interactionCreate', async i => {
   if (!i.isChatInputCommand()) return;
   if (i.user.id !== OWNER_ID) return;
 
+  // ---------- /submission ----------
   if (i.commandName === 'submission') {
     data.submissionChannel = i.channel.id;
     saveData();
     return i.reply({ content: `✅ KOS submission commands locked to <#${i.channel.id}>`, flags: 64 });
   }
 
+  // ---------- /logs ----------
   if (i.commandName === 'logs') {
     data.logsChannel = i.channel.id;
     saveData();
     return i.reply({ content: `✅ KOS command logs will be sent to <#${i.channel.id}>`, flags: 64 });
   }
 
+  // ---------- /backup ----------
+  // Run this once in your private backup channel to register it
+  if (i.commandName === 'backup') {
+    data.backupChannel = i.channel.id;
+    saveData();
+    return i.reply({ content: `✅ Data will be backed up to <#${i.channel.id}> after every change.`, flags: 64 });
+  }
+
+  // ---------- /panel ----------
   if (i.commandName === 'panel') {
     await i.deferReply({ flags: 64 });
     await updatePanel(i.channel);
     return i.editReply({ content: 'Panel updated.' });
   }
 
+  // ---------- /list ----------
   if (i.commandName === 'list') {
     await i.reply({ content: 'Creating KOS list...', flags: 64 });
     await updateKosList(i.channel, null, true);
     return i.editReply({ content: 'KOS list created.' });
   }
 
+  // ---------- /say ----------
+  if (i.commandName === 'say') {
+    const text = i.options.getString('text');
+    await i.channel.send(text);
+    return i.reply({ content: '✅ Message sent.', flags: 64 });
+  }
+
+  // ---------- /ban ----------
   if (i.commandName === 'ban') {
     const target = i.options.getUser('user');
-    if (target.id === OWNER_ID) return i.reply({ content: '❌ You cannot ban the bot owner.', flags: 64 });
+    if (target.id === OWNER_ID)          return i.reply({ content: '❌ You cannot ban the bot owner.', flags: 64 });
     if (data.bannedUsers.has(target.id)) return i.reply({ content: `⚠️ ${target.username} is already banned.`, flags: 64 });
 
     data.bannedUsers.add(target.id);
@@ -609,10 +653,10 @@ client.on('interactionCreate', async i => {
         await logChannel.send({ embeds: [embed] }).catch(() => {});
       }
     }
-
     return i.reply({ content: `🔨 **${target.username}** has been banned from using KOS commands.`, flags: 64 });
   }
 
+  // ---------- /unban ----------
   if (i.commandName === 'unban') {
     const target = i.options.getUser('user');
     if (!data.bannedUsers.has(target.id)) return i.reply({ content: `⚠️ ${target.username} is not currently banned.`, flags: 64 });
@@ -632,14 +676,26 @@ client.on('interactionCreate', async i => {
         await logChannel.send({ embeds: [embed] }).catch(() => {});
       }
     }
-
     return i.reply({ content: `✅ **${target.username}** has been unbanned from KOS commands.`, flags: 64 });
   }
 });
+
+/* ===================== AUTO-SAVE EVERY 10 HOURS ===================== */
+const TEN_HOURS = 10 * 60 * 60 * 1000;
+setInterval(() => {
+  saveData();
+  console.log(`[AutoSave] Triggered at ${new Date().toISOString()}`);
+}, TEN_HOURS);
 
 /* ===================== DUMMY SERVER FOR RENDER ===================== */
 const PORT = process.env.PORT || 3000;
 require('http').createServer((req, res) => res.end('Bot running')).listen(PORT);
 
-/* ===================== LOGIN ===================== */
+/* ===================== LOGIN + LOAD ===================== */
+// We must wait for the client to be ready before fetching channels for loadData
+client.once('ready', async () => {
+  console.log(`[Bot] Logged in as ${client.user.tag}`);
+  await loadData();
+});
+
 client.login(process.env.TOKEN);
