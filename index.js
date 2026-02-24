@@ -96,21 +96,48 @@ function rev() {
   return '\u200B'.repeat((data.revision % 10) + 1);
 }
 
-// Sends a temp reply then deletes both the reply and the command message
 async function reply(msg, text, ms = 3000) {
   const m = await msg.channel.send(`<@${msg.author.id}> ${text}`);
   setTimeout(() => { m.delete().catch(() => {}); msg.delete().catch(() => {}); }, ms);
 }
 
+/**
+ * Finds a player by checking in this order:
+ * 1. Display name (p.name) — case-insensitive
+ * 2. Username (p.username) — case-insensitive
+ * 3. Orphaned priority entry (in priority set but not in players map)
+ *
+ * Returns the player object, or a synthetic object for orphaned priority entries.
+ */
+function findPlayer(identifier) {
+  const id = identifier.toLowerCase();
+
+  // 1. Match by display name first
+  const byName = [...data.players.values()].find(p => p.name.toLowerCase() === id);
+  if (byName) return byName;
+
+  // 2. Match by username
+  const byUsername = [...data.players.values()].find(p => p.username && p.username.toLowerCase() === id);
+  if (byUsername) return byUsername;
+
+  // 3. Orphaned priority entry (exists in priority but not in players map)
+  const priorityKey = [...data.priority].find(k => k.toLowerCase() === id);
+  if (priorityKey) {
+    return { name: priorityKey, username: null, addedBy: null, _orphaned: true };
+  }
+
+  return null;
+}
+
 /* ===================== LOGGER ===================== */
 const LOG_COLORS = {
-  ADD:      0x57F287, // green
-  REMOVE:   0xED4245, // red
-  PRIORITY: 0xFEE75C, // yellow
-  CLAN_ADD: 0x5865F2, // blurple
-  CLAN_REM: 0xEB459E, // fuchsia
-  BAN:      0xFF6B35, // orange
-  ERROR:    0x95A5A6  // grey
+  ADD:      0x57F287,
+  REMOVE:   0xED4245,
+  PRIORITY: 0xFEE75C,
+  CLAN_ADD: 0x5865F2,
+  CLAN_REM: 0xEB459E,
+  BAN:      0xFF6B35,
+  ERROR:    0x95A5A6
 };
 
 async function sendLog(msg, action, color, fields) {
@@ -308,7 +335,7 @@ client.on('messageCreate', async msg => {
   const args = msg.content.trim().split(/\s+/);
   const cmd = args.shift().toLowerCase();
 
-  // ---------- Ban guard (owner is always immune) ----------
+  // ---------- Ban guard ----------
   if (data.bannedUsers.has(msg.author.id) && msg.author.id !== OWNER_ID) {
     return reply(msg, 'You have been banned from using KOS commands.');
   }
@@ -327,7 +354,11 @@ client.on('messageCreate', async msg => {
     if (!name) return reply(msg, 'Missing name and username.');
     if (!username) return reply(msg, 'Missing username.');
 
-    if (data.players.has(username)) {
+    // Check duplicate by username key OR display name
+    const duplicate = data.players.has(username)
+      || [...data.players.values()].find(p => p.name.toLowerCase() === name.toLowerCase());
+
+    if (duplicate) {
       await sendLog(msg, '⚠️ Add Player — Already Exists', LOG_COLORS.ERROR, [
         { name: 'Name', value: name, inline: true },
         { name: 'Username', value: username, inline: true },
@@ -354,8 +385,8 @@ client.on('messageCreate', async msg => {
     const [identifier] = args;
     if (!identifier) return reply(msg, 'Missing name.');
 
-    const player = data.players.get(identifier)
-      || [...data.players.values()].find(p => p.name.toLowerCase() === identifier.toLowerCase());
+    // display name → username → not found
+    const player = findPlayer(identifier);
 
     if (!player) {
       await sendLog(msg, '⚠️ Remove Player — Not Found', LOG_COLORS.ERROR, [
@@ -459,7 +490,12 @@ client.on('messageCreate', async msg => {
       if (!name) return reply(msg, 'Missing name.');
 
       const key = username || name;
-      if (data.players.has(key)) {
+
+      // Check duplicate by display name or username key
+      const duplicate = data.players.has(key)
+        || [...data.players.values()].find(p => p.name.toLowerCase() === name.toLowerCase());
+
+      if (duplicate) {
         return reply(msg, `Player already exists: ${key}`);
       }
 
@@ -477,16 +513,17 @@ client.on('messageCreate', async msg => {
       return reply(msg, `Added ${key} directly to priority`);
     }
 
+    // ^p and ^pr — display name → username → orphaned priority fallback
     const [identifier] = args;
     if (!identifier) return reply(msg, 'Missing name.');
 
-    const player = data.players.get(identifier)
-      || [...data.players.values()].find(p => p.name.toLowerCase() === identifier.toLowerCase());
+    const player = findPlayer(identifier);
 
     if (!player) return reply(msg, 'Player not found.');
 
     if (cmd === '^p') {
-      data.priority.add(player.username || player.name);
+      const priorityKey = player.username || player.name;
+      data.priority.add(priorityKey);
       await updateKosList(msg.channel, 'players');
       await updateKosList(msg.channel, 'priority');
 
@@ -496,12 +533,20 @@ client.on('messageCreate', async msg => {
         { name: 'Result', value: 'Promoted to Priority', inline: false }
       ]);
 
-      return reply(msg, `Promoted ${player.username || player.name} to priority`);
+      return reply(msg, `Promoted ${priorityKey} to priority`);
     }
 
     if (cmd === '^pr') {
-      data.priority.delete(player.username || player.name);
-      await updateKosList(msg.channel, 'players');
+      const priorityKey = player.username || player.name;
+
+      // Match the actual stored key in priority (handles casing differences)
+      const actualKey = [...data.priority].find(k => k.toLowerCase() === priorityKey.toLowerCase()) || priorityKey;
+      data.priority.delete(actualKey);
+
+      // Keep the player in the players list; just remove from priority
+      if (!player._orphaned) {
+        await updateKosList(msg.channel, 'players');
+      }
       await updateKosList(msg.channel, 'priority');
 
       await sendLog(msg, '🔻 Player Removed from Priority', LOG_COLORS.REMOVE, [
@@ -510,7 +555,7 @@ client.on('messageCreate', async msg => {
         { name: 'Result', value: 'Removed from Priority', inline: false }
       ]);
 
-      return reply(msg, `Removed ${player.username || player.name} from priority`);
+      return reply(msg, `Removed ${actualKey} from priority`);
     }
   }
 });
@@ -520,51 +565,34 @@ client.on('interactionCreate', async i => {
   if (!i.isChatInputCommand()) return;
   if (i.user.id !== OWNER_ID) return;
 
-  // ---------- /submission ----------
   if (i.commandName === 'submission') {
     data.submissionChannel = i.channel.id;
     saveData();
-    return i.reply({
-      content: `✅ KOS submission commands locked to <#${i.channel.id}>`,
-      flags: 64
-    });
+    return i.reply({ content: `✅ KOS submission commands locked to <#${i.channel.id}>`, flags: 64 });
   }
 
-  // ---------- /logs ----------
   if (i.commandName === 'logs') {
     data.logsChannel = i.channel.id;
     saveData();
-    return i.reply({
-      content: `✅ KOS command logs will be sent to <#${i.channel.id}>`,
-      flags: 64
-    });
+    return i.reply({ content: `✅ KOS command logs will be sent to <#${i.channel.id}>`, flags: 64 });
   }
 
-  // ---------- /panel ----------
   if (i.commandName === 'panel') {
     await i.deferReply({ flags: 64 });
     await updatePanel(i.channel);
     return i.editReply({ content: 'Panel updated.' });
   }
 
-  // ---------- /list ----------
   if (i.commandName === 'list') {
     await i.reply({ content: 'Creating KOS list...', flags: 64 });
     await updateKosList(i.channel, null, true);
     return i.editReply({ content: 'KOS list created.' });
   }
 
-  // ---------- /ban ----------
   if (i.commandName === 'ban') {
     const target = i.options.getUser('user');
-
-    if (target.id === OWNER_ID) {
-      return i.reply({ content: '❌ You cannot ban the bot owner.', flags: 64 });
-    }
-
-    if (data.bannedUsers.has(target.id)) {
-      return i.reply({ content: `⚠️ ${target.username} is already banned.`, flags: 64 });
-    }
+    if (target.id === OWNER_ID) return i.reply({ content: '❌ You cannot ban the bot owner.', flags: 64 });
+    if (data.bannedUsers.has(target.id)) return i.reply({ content: `⚠️ ${target.username} is already banned.`, flags: 64 });
 
     data.bannedUsers.add(target.id);
     saveData();
@@ -582,19 +610,12 @@ client.on('interactionCreate', async i => {
       }
     }
 
-    return i.reply({
-      content: `🔨 **${target.username}** has been banned from using KOS commands.`,
-      flags: 64
-    });
+    return i.reply({ content: `🔨 **${target.username}** has been banned from using KOS commands.`, flags: 64 });
   }
 
-  // ---------- /unban ----------
   if (i.commandName === 'unban') {
     const target = i.options.getUser('user');
-
-    if (!data.bannedUsers.has(target.id)) {
-      return i.reply({ content: `⚠️ ${target.username} is not currently banned.`, flags: 64 });
-    }
+    if (!data.bannedUsers.has(target.id)) return i.reply({ content: `⚠️ ${target.username} is not currently banned.`, flags: 64 });
 
     data.bannedUsers.delete(target.id);
     saveData();
@@ -612,10 +633,7 @@ client.on('interactionCreate', async i => {
       }
     }
 
-    return i.reply({
-      content: `✅ **${target.username}** has been unbanned from KOS commands.`,
-      flags: 64
-    });
+    return i.reply({ content: `✅ **${target.username}** has been unbanned from KOS commands.`, flags: 64 });
   }
 });
 
