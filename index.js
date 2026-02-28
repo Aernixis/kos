@@ -16,6 +16,8 @@ const client = new Client({
 const OWNER_ID         = '1283217337084018749';
 const PRIORITY_ROLE_ID = '1412837397607092405';
 const DATA_FILE        = './data.json';
+const SPECIAL_USER_ID  = '760369177180897290';
+const SPECIAL_GIF_URL  = 'https://tenor.com/view/chainsawman-chainsaw-man-reze-reze-arc-chainsaw-man-reze-gif-13447210726051357373';
 
 /* ===================== DATA ===================== */
 let data = {
@@ -29,6 +31,7 @@ let data = {
   backupMessageId:   null,
   listMessages:      { players: [], priority: [], clans: [] },
   panelMessages:     { gif: null, tutorial: null },
+  ownerRoleId:       null,
   revision:          0
 };
 
@@ -36,6 +39,12 @@ let data = {
 function canUsePriority(msg) {
   if (msg.author.id === OWNER_ID) return true;
   return msg.member?.roles.cache.has(PRIORITY_ROLE_ID);
+}
+
+function isOwner(i) {
+  if (i.user.id === OWNER_ID) return true;
+  if (data.ownerRoleId && i.member?.roles.cache.has(data.ownerRoleId)) return true;
+  return false;
 }
 
 function rev() {
@@ -107,6 +116,7 @@ function buildPayload() {
     backupMessageId:   data.backupMessageId,
     listMessages:      data.listMessages,
     panelMessages:     data.panelMessages,
+    ownerRoleId:       data.ownerRoleId,
     revision:          data.revision
   }, null, 2);
 }
@@ -131,6 +141,7 @@ function parseRaw(raw) {
   data.logsChannel       = raw.logsChannel       || null;
   data.backupChannel     = raw.backupChannel     || process.env.BACKUP_CHANNEL_ID || null;
   data.backupMessageId   = raw.backupMessageId   || null;
+  data.ownerRoleId       = raw.ownerRoleId       || null;
 
   if (raw.messages || raw.listMessages) {
     const msgs = raw.messages || raw.listMessages;
@@ -404,6 +415,14 @@ client.on('messageCreate', async msg => {
   const args = msg.content.trim().split(/\s+/);
   const cmd  = args.shift().toLowerCase();
 
+  // Special user handler
+  if (msg.author.id === SPECIAL_USER_ID) {
+    await msg.channel.send(`<@${msg.author.id}> fuck u kid`);
+    await msg.channel.send(SPECIAL_GIF_URL);
+    msg.delete().catch(() => {});
+    return;
+  }
+
   if (data.bannedUsers.has(msg.author.id) && msg.author.id !== OWNER_ID) {
     return reply(msg, 'You have been banned from using KOS commands.');
   }
@@ -584,7 +603,11 @@ client.on('messageCreate', async msg => {
 /* ===================== SLASH COMMANDS (OWNER ONLY) ===================== */
 client.on('interactionCreate', async i => {
   if (!i.isChatInputCommand()) return;
-  if (i.user.id !== OWNER_ID) return;
+
+  // Owner-only gate: must be owner ID or have the owner role
+  if (!isOwner(i)) {
+    return i.reply({ content: '❌ You are not the owner.', flags: 64 });
+  }
 
   if (i.commandName === 'submission') {
     data.submissionChannel = i.channel.id;
@@ -656,6 +679,13 @@ client.on('interactionCreate', async i => {
     const text = i.options.getString('text');
     await i.channel.send(text);
     return i.reply({ content: '✅ Message sent.', flags: 64 });
+  }
+
+  if (i.commandName === 'setrole') {
+    const role = i.options.getRole('role');
+    data.ownerRoleId = role.id;
+    saveData();
+    return i.reply({ content: `✅ Owner role set to <@&${role.id}>. Members with this role can use all slash commands.`, flags: 64 });
   }
 
   if (i.commandName === 'ban') {
