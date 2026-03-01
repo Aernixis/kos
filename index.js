@@ -98,9 +98,61 @@ function findPlayer(identifier) {
   return null;
 }
 
+/**
+ * Removes ALL traces of a player from both data.players and data.priority,
+ * matching by name OR username (case-insensitive).
+ * Returns an array of all player objects that were removed.
+ */
+function removePlayerEverywhere(identifier) {
+  const id = identifier.toLowerCase();
+  const removed = [];
+
+  // Collect and delete all matching entries from data.players
+  for (const [key, player] of [...data.players.entries()]) {
+    if (
+      player.name.toLowerCase() === id ||
+      (player.username && player.username.toLowerCase() === id) ||
+      key.toLowerCase() === id
+    ) {
+      removed.push(player);
+      data.players.delete(key);
+    }
+  }
+
+  // Build a set of all identifiers from removed players to wipe priority thoroughly
+  const removedIdentifiers = new Set([id]);
+  for (const p of removed) {
+    removedIdentifiers.add(p.name.toLowerCase());
+    if (p.username) removedIdentifiers.add(p.username.toLowerCase());
+  }
+
+  // Wipe all matching keys from priority
+  for (const key of [...data.priority]) {
+    if (removedIdentifiers.has(key.toLowerCase())) {
+      data.priority.delete(key);
+    }
+  }
+
+  // If nothing found in players, check for an orphaned priority-only entry
+  if (removed.length === 0) {
+    let foundOrphaned = false;
+    for (const key of [...data.priority]) {
+      if (key.toLowerCase() === id) {
+        data.priority.delete(key);
+        foundOrphaned = true;
+      }
+    }
+    if (foundOrphaned) {
+      removed.push({ name: identifier, username: null, addedBy: null, _orphaned: true });
+    }
+  }
+
+  return removed;
+}
+
 /* ===================== BUILD / PARSE ===================== */
 function buildPayload() {
-  sortData(); // always sort before saving so backup is alphabetical
+  sortData();
   return JSON.stringify({
     players: [...data.players.values()].map(p => ({
       name:     p.name,
@@ -155,7 +207,7 @@ function parseRaw(raw) {
   data.panelMessages = raw.panelMessages || data.panelMessages;
   data.revision      = raw.revision      || 0;
 
-  sortData(); // sort immediately after loading
+  sortData();
 }
 
 /* ===================== SAVE / LOAD ===================== */
@@ -244,13 +296,22 @@ const LOG_COLORS = {
   ERROR:    0x95A5A6
 };
 
+function getAvatarURL(user) {
+  if (!user.avatar) return user.defaultAvatarURL;
+  // Animated avatars have a hash starting with "a_" — request .gif for those
+  if (user.avatar.startsWith('a_')) {
+    return user.displayAvatarURL({ extension: 'gif', forceStatic: false, size: 128 });
+  }
+  return user.displayAvatarURL({ extension: 'png', size: 128 });
+}
+
 async function sendLog(msg, action, color, fields) {
   if (!data.logsChannel) return;
   const logChannel = await client.channels.fetch(data.logsChannel).catch(() => null);
   if (!logChannel) return;
   const embed = new EmbedBuilder()
     .setColor(color)
-    .setAuthor({ name: `${msg.author.username} (${msg.author.id})`, iconURL: msg.author.displayAvatarURL() })
+    .setAuthor({ name: `${msg.author.username} (${msg.author.id})`, iconURL: getAvatarURL(msg.author) })
     .setTitle(action)
     .addFields(fields)
     .setTimestamp()
@@ -259,6 +320,14 @@ async function sendLog(msg, action, color, fields) {
 }
 
 /* ===================== FORMATTERS ===================== */
+
+// Format a player row:
+//   With username:    "name @username"
+//   Without username: "name"
+function formatPlayerRow(name, username) {
+  return username ? `${name} @${username}` : name;
+}
+
 function formatPlayers() {
   const rows = [...data.players.values()]
     .filter(p => !data.priority.has(playerKey(p)))
@@ -274,7 +343,8 @@ function formatPriority() {
       if (!p) p = [...data.players.values()].find(pl => playerKey(pl).toLowerCase() === u.toLowerCase());
       return {
         sortKey: p ? p.name : u,
-        display: p ? `${p.name} : ${p.username || 'N/A'}` : u
+        // Never show N/A — only append @username if one exists
+        display: p ? formatPlayerRow(p.name, p.username) : u
       };
     })
     .sort((a, b) => alpha(a.sortKey, b.sortKey))
@@ -466,32 +536,44 @@ client.on('messageCreate', async msg => {
   if (cmd === '^kr') {
     const [identifier] = args;
     if (!identifier) return reply(msg, 'Missing name.');
-    const player = findPlayer(identifier);
-    if (!player) {
+
+    // Find player first for permission check + logging info
+    const playerCheck = findPlayer(identifier);
+    if (!playerCheck) {
       await sendLog(msg, '⚠️ Remove Player — Not Found', LOG_COLORS.ERROR, [
         { name: 'Identifier', value: identifier, inline: true },
         { name: 'Result',     value: 'Player not found', inline: false }
       ]);
       return reply(msg, 'Player not found.');
     }
-    if (player.addedBy !== msg.author.id && msg.author.id !== OWNER_ID && !canUsePriority(msg)) {
+
+    // Permission check (skip for orphaned priority-only entries)
+    if (
+      !playerCheck._orphaned &&
+      playerCheck.addedBy !== msg.author.id &&
+      msg.author.id !== OWNER_ID &&
+      !canUsePriority(msg)
+    ) {
       await sendLog(msg, '⛔ Remove Player — Permission Denied', LOG_COLORS.ERROR, [
-        { name: 'Target', value: player.username || player.name, inline: true },
+        { name: 'Target', value: playerCheck.username || playerCheck.name, inline: true },
         { name: 'Result', value: 'User did not add this player', inline: false }
       ]);
       return reply(msg, "You didn't add this player.");
     }
-    const removed = playerKey(player);
-    data.players.delete(removed);
-    data.priority.delete(removed);
+
+    // Remove ALL traces from both data.players and data.priority
+    const removedList = removePlayerEverywhere(identifier);
+
     await updateKosList(msg.channel, 'players');
     await updateKosList(msg.channel, 'priority');
+
+    const primary = removedList[0] || playerCheck;
     await sendLog(msg, '🗑️ Player Removed', LOG_COLORS.REMOVE, [
-      { name: 'Name',     value: player.name,              inline: true },
-      { name: 'Username', value: player.username || 'N/A', inline: true },
-      { name: 'Result',   value: 'Removed from KOS list',  inline: false }
+      { name: 'Name',     value: primary.name,              inline: true },
+      { name: 'Username', value: primary.username || 'N/A', inline: true },
+      { name: 'Result',   value: `Fully removed (${removedList.length} entr${removedList.length === 1 ? 'y' : 'ies'} cleared)`, inline: false }
     ]);
-    return reply(msg, `Removed ${player.name}`);
+    return reply(msg, `Removed ${primary.name}`);
   }
 
   // ---------- ^kca ----------
@@ -585,9 +667,12 @@ client.on('messageCreate', async msg => {
     }
 
     if (cmd === '^pr') {
-      const key       = playerKey(player);
-      const actualKey = [...data.priority].find(k => k.toLowerCase() === key.toLowerCase()) || key;
-      data.priority.delete(actualKey);
+      // Remove from priority only — keep the player in data.players
+      const identifiers = new Set([playerKey(player).toLowerCase(), player.name.toLowerCase()]);
+      if (player.username) identifiers.add(player.username.toLowerCase());
+      for (const k of [...data.priority]) {
+        if (identifiers.has(k.toLowerCase())) data.priority.delete(k);
+      }
       if (!player._orphaned) await updateKosList(msg.channel, 'players');
       await updateKosList(msg.channel, 'priority');
       await sendLog(msg, '🔻 Player Removed from Priority', LOG_COLORS.REMOVE, [
@@ -604,7 +689,6 @@ client.on('messageCreate', async msg => {
 client.on('interactionCreate', async i => {
   if (!i.isChatInputCommand()) return;
 
-  // Owner-only gate: must be owner ID or have the owner role
   if (!isOwner(i)) {
     return i.reply({ content: '❌ You are not the owner.', flags: 64 });
   }
