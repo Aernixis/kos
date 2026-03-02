@@ -239,10 +239,23 @@ async function pushBackup() {
   } catch (e) { console.error('[Backup] Discord push failed:', e.message); }
 }
 
+/* ===================== CHANGE-TRIGGERED AUTO-SAVE ===================== */
+// Pushes a backup to Discord every 5 list changes
+let _pendingChanges = 0;
+function trackChange() {
+  _pendingChanges++;
+  if (_pendingChanges >= 5) {
+    _pendingChanges = 0;
+    console.log(`[AutoSave] 5 changes reached — pushing backup at ${new Date().toISOString()}`);
+    pushBackup();
+  }
+}
+
 let _saveTimer = null;
 function saveData() {
+  trackChange();                             // count toward 5-change Discord backup
   if (_saveTimer) clearTimeout(_saveTimer);
-  _saveTimer = setTimeout(() => pushBackup(), 1000);
+  _saveTimer = setTimeout(() => pushBackup(), 1000); // debounce local write
 }
 
 async function loadData() {
@@ -332,7 +345,7 @@ function formatPlayers() {
   const rows = [...data.players.values()]
     .filter(p => !data.priority.has(playerKey(p)))
     .sort((a, b) => alpha(a.name, b.name))
-    .map(p => `${p.name} : ${p.username || 'N/A'}`);
+    .map(p => formatPlayerRow(p.name, p.username));
   return rows.length ? rows.join('\n') : 'None';
 }
 
@@ -783,7 +796,7 @@ client.on('interactionCreate', async i => {
       if (logCh) {
         await logCh.send({ embeds: [new EmbedBuilder()
           .setColor(LOG_COLORS.BAN)
-          .setAuthor({ name: `${i.user.username} (${i.user.id})`, iconURL: i.user.displayAvatarURL() })
+          .setAuthor({ name: `${i.user.username} (${i.user.id})`, iconURL: getAvatarURL(i.user) })
           .setTitle('🔨 User Banned from KOS Commands')
           .addFields({ name: 'Banned User', value: `${target.username} (${target.id})`, inline: true })
           .setTimestamp()
@@ -803,7 +816,7 @@ client.on('interactionCreate', async i => {
       if (logCh) {
         await logCh.send({ embeds: [new EmbedBuilder()
           .setColor(LOG_COLORS.ADD)
-          .setAuthor({ name: `${i.user.username} (${i.user.id})`, iconURL: i.user.displayAvatarURL() })
+          .setAuthor({ name: `${i.user.username} (${i.user.id})`, iconURL: getAvatarURL(i.user) })
           .setTitle('✅ User Unbanned from KOS Commands')
           .addFields({ name: 'Unbanned User', value: `${target.username} (${target.id})`, inline: true })
           .setTimestamp()
@@ -813,12 +826,6 @@ client.on('interactionCreate', async i => {
     return i.reply({ content: `✅ **${target.username}** has been unbanned from KOS commands.`, flags: 64 });
   }
 });
-
-/* ===================== AUTO-SAVE EVERY 10 HOURS ===================== */
-setInterval(async () => {
-  console.log(`[AutoSave] Triggered at ${new Date().toISOString()}`);
-  await pushBackup();
-}, 10 * 60 * 60 * 1000);
 
 /* ===================== DUMMY SERVER FOR RENDER ===================== */
 const PORT = process.env.PORT || 3000;
