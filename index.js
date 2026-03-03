@@ -297,7 +297,12 @@ async function sendLog(msg, action, color, fields) {
 }
 
 /* ===================== FORMATTERS ===================== */
+// Players list uses "name : username", priority list uses "name @username"
 function formatPlayerRow(name, username) {
+  return username ? `${name} : ${username}` : name;
+}
+
+function formatPriorityRow(name, username) {
   return username ? `${name} @${username}` : name;
 }
 
@@ -316,7 +321,7 @@ function formatPriority() {
       if (!p) p = [...data.players.values()].find(pl => playerKey(pl).toLowerCase() === u.toLowerCase());
       return {
         sortKey: p ? p.name : u,
-        display: p ? formatPlayerRow(p.name, p.username) : u
+        display: p ? formatPriorityRow(p.name, p.username) : u
       };
     })
     .sort((a, b) => alpha(a.sortKey, b.sortKey))
