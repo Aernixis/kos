@@ -13,19 +13,20 @@ const client = new Client({
 });
 
 /* ===================== CONSTANTS ===================== */
-const OWNER_ID            = '1283217337084018749';
-const PRIORITY_ROLE_ID    = '1412837397607092405';
-const DATA_FILE           = './data.json';
-const SPECIAL_USER_ID     = '760369177180897290';
-const SPECIAL_GIF_URL     = 'https://tenor.com/view/chainsawman-chainsaw-man-reze-reze-arc-chainsaw-man-reze-gif-13447210726051357373';
-
-// Fixed channel IDs — no longer configurable via slash commands
-const SUBMISSION_CHANNEL  = '1450867784543113318';
-const LOGS_CHANNEL        = '1473800222927880223';
-const BACKUP_CHANNEL      = '1475960780976292051';
+const OWNER_ID           = '1283217337084018749';
+const PRIORITY_ROLE_ID   = '1412837397607092405';
+const DATA_FILE          = './data.json';
+const SPECIAL_USER_ID    = '760369177180897290';
+const SPECIAL_GIF_URL    = 'https://tenor.com/view/chainsawman-chainsaw-man-reze-reze-arc-chainsaw-man-reze-gif-13447210726051357373';
+const SUBMISSION_CHANNEL = '1450867784543113318';
+const LOGS_CHANNEL       = '1473800222927880223';
+const BACKUP_CHANNEL     = '1475960780976292051';
 
 /* ===================== STATE ===================== */
-let prefixEnabled = true; // toggled by /enable and /disable
+let prefixEnabled = true;
+
+// Hard dedup guard — prevents double-firing if event somehow triggers twice
+const handledMessages = new Set();
 
 /* ===================== DATA ===================== */
 let data = {
@@ -74,8 +75,7 @@ function playerKey(p) {
 const alpha = (a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' });
 
 function sortData() {
-  const sortedPlayers = [...data.players.values()]
-    .sort((a, b) => alpha(a.name, b.name));
+  const sortedPlayers = [...data.players.values()].sort((a, b) => alpha(a.name, b.name));
   data.players = new Map(sortedPlayers.map(p => [playerKey(p), p]));
 
   const sortedPriority = [...data.priority].sort((a, b) => {
@@ -84,13 +84,12 @@ function sortData() {
     return alpha(pa ? pa.name : a, pb ? pb.name : b);
   });
   data.priority = new Set(sortedPriority);
-
   data.clans = new Set([...data.clans].sort((a, b) => alpha(a, b)));
 }
 
 function findPlayer(identifier) {
   const id = identifier.toLowerCase();
-  const byName     = [...data.players.values()].find(p => p.name.toLowerCase() === id);
+  const byName = [...data.players.values()].find(p => p.name.toLowerCase() === id);
   if (byName) return byName;
   const byUsername = [...data.players.values()].find(p => p.username && p.username.toLowerCase() === id);
   if (byUsername) return byUsername;
@@ -119,24 +118,16 @@ function removePlayerEverywhere(identifier) {
     removedIdentifiers.add(p.name.toLowerCase());
     if (p.username) removedIdentifiers.add(p.username.toLowerCase());
   }
-
   for (const key of [...data.priority]) {
-    if (removedIdentifiers.has(key.toLowerCase())) {
-      data.priority.delete(key);
-    }
+    if (removedIdentifiers.has(key.toLowerCase())) data.priority.delete(key);
   }
 
   if (removed.length === 0) {
     let foundOrphaned = false;
     for (const key of [...data.priority]) {
-      if (key.toLowerCase() === id) {
-        data.priority.delete(key);
-        foundOrphaned = true;
-      }
+      if (key.toLowerCase() === id) { data.priority.delete(key); foundOrphaned = true; }
     }
-    if (foundOrphaned) {
-      removed.push({ name: identifier, username: null, addedBy: null, _orphaned: true });
-    }
+    if (foundOrphaned) removed.push({ name: identifier, username: null, addedBy: null, _orphaned: true });
   }
 
   return removed;
@@ -146,7 +137,7 @@ function removePlayerEverywhere(identifier) {
 function buildPayload() {
   sortData();
   return JSON.stringify({
-    players: [...data.players.values()].map(p => ({
+    players:         [...data.players.values()].map(p => ({
       name:     p.name,
       username: cleanUsername(p.username) || null,
       addedBy:  p.addedBy
@@ -176,12 +167,10 @@ function parseRaw(raw) {
   if (raw.topPriority) raw.topPriority.forEach(u => { if (u) data.priority.add(u); });
   if (raw.priority)    raw.priority.forEach(u => { if (u) data.priority.add(u); });
 
-  data.clans       = new Set(raw.clans       || []);
-  data.bannedUsers = new Set(raw.bannedUsers || []);
-
-  // Always use fixed channel IDs — ignore any stored values
-  data.backupMessageId = raw.backupMessageId || null;
-  data.ownerRoleId     = raw.ownerRoleId     || null;
+  data.clans           = new Set(raw.clans       || []);
+  data.bannedUsers     = new Set(raw.bannedUsers || []);
+  data.backupMessageId = raw.backupMessageId     || null;
+  data.ownerRoleId     = raw.ownerRoleId         || null;
 
   if (raw.messages || raw.listMessages) {
     const msgs = raw.messages || raw.listMessages;
@@ -199,63 +188,50 @@ function parseRaw(raw) {
 }
 
 /* ===================== SAVE / LOAD ===================== */
-
-/**
- * Deletes ALL messages in the backup channel, then posts a fresh backup.
- */
 async function pushBackup() {
   const payload = buildPayload();
-
   try { fs.writeFileSync(DATA_FILE, payload); } catch (e) { console.error('[Backup] Local write failed:', e.message); }
 
   try {
     const ch = await client.channels.fetch(BACKUP_CHANNEL).catch(() => null);
     if (!ch) return;
 
-    // Delete all existing messages in the backup channel
+    // Wipe all messages then post fresh
     let fetched;
     do {
       fetched = await ch.messages.fetch({ limit: 100 });
       if (fetched.size === 0) break;
-      for (const m of fetched.values()) {
-        await m.delete().catch(() => {});
-      }
+      for (const m of fetched.values()) await m.delete().catch(() => {});
     } while (fetched.size >= 2);
 
-    // Post fresh backup
     const buf        = Buffer.from(payload, 'utf8');
     const attachment = new AttachmentBuilder(buf, { name: 'data.json' });
     const content    = `Last save: <t:${Math.floor(Date.now() / 1000)}:F>`;
     const sent       = await ch.send({ content, files: [attachment] });
     data.backupMessageId = sent.id;
     fs.writeFileSync(DATA_FILE, buildPayload());
-    console.log(`[Backup] Pushed fresh backup (msg ${sent.id}) at ${new Date().toISOString()}`);
+    console.log(`[Backup] Pushed at ${new Date().toISOString()} (msg ${sent.id})`);
   } catch (e) { console.error('[Backup] Discord push failed:', e.message); }
 }
 
-/* ===================== 24-HOUR AUTO-BACKUP ===================== */
 function schedule24hBackup() {
-  const INTERVAL = 24 * 60 * 60 * 1000; // 24 hours in ms
   setInterval(async () => {
-    console.log(`[AutoBackup] 24h interval — pushing backup at ${new Date().toISOString()}`);
+    console.log(`[AutoBackup] 24h tick — ${new Date().toISOString()}`);
     await pushBackup();
-  }, INTERVAL);
+  }, 24 * 60 * 60 * 1000);
 }
 
-/* ===================== CHANGE-TRIGGERED AUTO-SAVE ===================== */
 let _pendingChanges = 0;
-function trackChange() {
+let _saveTimer = null;
+
+function saveData() {
   _pendingChanges++;
   if (_pendingChanges >= 5) {
     _pendingChanges = 0;
-    console.log(`[AutoSave] 5 changes reached — pushing backup at ${new Date().toISOString()}`);
+    if (_saveTimer) { clearTimeout(_saveTimer); _saveTimer = null; }
     pushBackup();
+    return;
   }
-}
-
-let _saveTimer = null;
-function saveData() {
-  trackChange();
   if (_saveTimer) clearTimeout(_saveTimer);
   _saveTimer = setTimeout(() => pushBackup(), 1000);
 }
@@ -276,11 +252,7 @@ async function loadData() {
     const ch        = await client.channels.fetch(BACKUP_CHANNEL);
     const messages  = await ch.messages.fetch({ limit: 20 });
     const backupMsg = messages.find(m => m.attachments.some(a => a.name === 'data.json'));
-
-    if (!backupMsg) {
-      console.warn('[Load] No backup found in channel. Starting fresh.');
-      return;
-    }
+    if (!backupMsg) { console.warn('[Load] No backup found. Starting fresh.'); return; }
 
     const att = backupMsg.attachments.find(a => a.name === 'data.json');
     const res  = await fetch(att.url);
@@ -305,9 +277,7 @@ const LOG_COLORS = {
 
 function getAvatarURL(user) {
   if (!user.avatar) return user.defaultAvatarURL;
-  if (user.avatar.startsWith('a_')) {
-    return user.displayAvatarURL({ extension: 'gif', forceStatic: false, size: 128 });
-  }
+  if (user.avatar.startsWith('a_')) return user.displayAvatarURL({ extension: 'gif', forceStatic: false, size: 128 });
   return user.displayAvatarURL({ extension: 'png', size: 128 });
 }
 
@@ -323,7 +293,7 @@ async function sendLog(msg, action, color, fields) {
       .setTimestamp()
       .setFooter({ text: `#${msg.channel.name}` });
     await logChannel.send({ embeds: [embed] }).catch(() => {});
-  } catch (e) { console.error('[Log] Failed to send log:', e.message); }
+  } catch (e) {}
 }
 
 /* ===================== FORMATTERS ===================== */
@@ -355,13 +325,11 @@ function formatPriority() {
 }
 
 function formatClans() {
-  return data.clans.size
-    ? [...data.clans].sort((a, b) => alpha(a, b)).join('\n')
-    : 'None';
+  return data.clans.size ? [...data.clans].sort((a, b) => alpha(a, b)).join('\n') : 'None';
 }
 
 /* ===================== LIST UPDATER ===================== */
-let updatingSections = {};
+const updatingSections = {};
 
 function splitIntoChunks(title, content, revMarker) {
   const MAX_LENGTH = 1900;
@@ -392,33 +360,37 @@ async function updateKosList(channel, sectionToUpdate = null, forceCreate = fals
     if (sectionToUpdate && key !== sectionToUpdate) continue;
     if (updatingSections[key]) continue;
     updatingSections[key] = true;
-    const chunks = splitIntoChunks(title, getContent(), rev());
-    if (forceCreate) {
-      const newMessages = [];
-      for (const chunk of chunks) {
-        const m = await channel.send(chunk).catch(() => null);
-        if (m) newMessages.push(m.id);
-      }
-      data.listMessages[key] = newMessages;
-    } else {
-      const storedIds = data.listMessages[key] || [];
-      if (storedIds.length > 0) {
-        for (let i = 0; i < Math.max(chunks.length, storedIds.length); i++) {
-          if (i < storedIds.length) {
-            const m = await channel.messages.fetch(storedIds[i]).catch(() => null);
-            if (m) {
-              if (i < chunks.length) { await m.edit(chunks[i]).catch(() => {}); }
-              else { await m.delete().catch(() => {}); storedIds.splice(i, 1); i--; }
-            }
-          } else {
-            const m = await channel.send(chunks[i]).catch(() => null);
-            if (m) storedIds.push(m.id);
-          }
+    try {
+      const chunks = splitIntoChunks(title, getContent(), rev());
+      if (forceCreate) {
+        const newMessages = [];
+        for (const chunk of chunks) {
+          const m = await channel.send(chunk).catch(() => null);
+          if (m) newMessages.push(m.id);
         }
-        data.listMessages[key] = storedIds.filter(Boolean);
+        data.listMessages[key] = newMessages;
+      } else {
+        const storedIds = data.listMessages[key] || [];
+        if (storedIds.length > 0) {
+          for (let i = 0; i < Math.max(chunks.length, storedIds.length); i++) {
+            if (i < storedIds.length) {
+              const m = await channel.messages.fetch(storedIds[i]).catch(() => null);
+              if (m) {
+                if (i < chunks.length) { await m.edit(chunks[i]).catch(() => {}); }
+                else { await m.delete().catch(() => {}); storedIds.splice(i, 1); i--; }
+              }
+            } else {
+              const m = await channel.send(chunks[i]).catch(() => null);
+              if (m) storedIds.push(m.id);
+            }
+          }
+          data.listMessages[key] = storedIds.filter(Boolean);
+        }
+        // If no storedIds and not forceCreate, do nothing — prevents phantom new messages
       }
+    } finally {
+      updatingSections[key] = false;
     }
-    updatingSections[key] = false;
   }
   saveData();
 }
@@ -481,13 +453,16 @@ Thank you for being a part of YX!
 client.on('messageCreate', async msg => {
   if (msg.author.bot) return;
   if (!msg.content.startsWith('^')) return;
-  if (msg._handled) return;
-  msg._handled = true;
+
+  // Hard dedup — if we've already handled this exact message ID, ignore it
+  if (handledMessages.has(msg.id)) return;
+  handledMessages.add(msg.id);
+  setTimeout(() => handledMessages.delete(msg.id), 10000);
 
   const args = msg.content.trim().split(/\s+/);
   const cmd  = args.shift().toLowerCase();
 
-  // Special user handler (always fires regardless of enabled state)
+  // Special user — always fires regardless of enabled state
   if (msg.author.id === SPECIAL_USER_ID) {
     await msg.channel.send(`<@${msg.author.id}> fuck u kid`);
     await msg.channel.send(SPECIAL_GIF_URL);
@@ -495,7 +470,7 @@ client.on('messageCreate', async msg => {
     return;
   }
 
-  // Disabled state — respond and bail (owner can still use commands)
+  // Disabled state — non-owners get the holding message
   if (!prefixEnabled && msg.author.id !== OWNER_ID) {
     const m = await msg.channel.send('schwanz is disabled im fixing it plz wait');
     setTimeout(() => { m.delete().catch(() => {}); msg.delete().catch(() => {}); }, 5000);
@@ -523,7 +498,7 @@ client.on('messageCreate', async msg => {
       || [...data.players.values()].find(p => p.name.toLowerCase() === name.toLowerCase());
     if (duplicate) {
       await sendLog(msg, '⚠️ Add Player — Already Exists', LOG_COLORS.ERROR, [
-        { name: 'Name',     value: name,             inline: true },
+        { name: 'Name',     value: name,              inline: true },
         { name: 'Username', value: username || 'N/A', inline: true },
         { name: 'Result',   value: 'Already on KOS list', inline: false }
       ]);
@@ -534,7 +509,7 @@ client.on('messageCreate', async msg => {
     data.priority.delete(key);
     await updateKosList(msg.channel, 'players');
     await sendLog(msg, '✅ Player Added', LOG_COLORS.ADD, [
-      { name: 'Name',     value: name,             inline: true },
+      { name: 'Name',     value: name,              inline: true },
       { name: 'Username', value: username || 'N/A', inline: true },
       { name: 'Result',   value: 'Added to KOS list', inline: false }
     ]);
@@ -569,7 +544,6 @@ client.on('messageCreate', async msg => {
     }
 
     const removedList = removePlayerEverywhere(identifier);
-
     await updateKosList(msg.channel, 'players');
     await updateKosList(msg.channel, 'priority');
 
@@ -590,7 +564,7 @@ client.on('messageCreate', async msg => {
     const clan = `${region.toUpperCase()}»${name.toUpperCase()}`;
     if (data.clans.has(clan)) {
       await sendLog(msg, '⚠️ Add Clan — Already Exists', LOG_COLORS.ERROR, [
-        { name: 'Name', value: name.toUpperCase(), inline: true },
+        { name: 'Name',   value: name.toUpperCase(),   inline: true },
         { name: 'Region', value: region.toUpperCase(), inline: true },
         { name: 'Result', value: 'Already on KOS list', inline: false }
       ]);
@@ -599,7 +573,7 @@ client.on('messageCreate', async msg => {
     data.clans.add(clan);
     await updateKosList(msg.channel, 'clans');
     await sendLog(msg, '✅ Clan Added', LOG_COLORS.CLAN_ADD, [
-      { name: 'Name', value: name.toUpperCase(), inline: true },
+      { name: 'Name',   value: name.toUpperCase(),   inline: true },
       { name: 'Region', value: region.toUpperCase(), inline: true },
       { name: 'Result', value: 'Clan Added to KOS list', inline: false }
     ]);
@@ -615,14 +589,14 @@ client.on('messageCreate', async msg => {
     if (data.clans.delete(clan)) {
       await updateKosList(msg.channel, 'clans');
       await sendLog(msg, '🗑️ Clan Removed', LOG_COLORS.CLAN_REM, [
-        { name: 'Name', value: name.toUpperCase(), inline: true },
+        { name: 'Name',   value: name.toUpperCase(),   inline: true },
         { name: 'Region', value: region.toUpperCase(), inline: true },
         { name: 'Result', value: 'Clan Removed from KOS list', inline: false }
       ]);
       return reply(msg, `Removed clan ${clan}`);
     } else {
       await sendLog(msg, '⚠️ Remove Clan — Not Found', LOG_COLORS.ERROR, [
-        { name: 'Name', value: name.toUpperCase(), inline: true },
+        { name: 'Name',   value: name.toUpperCase(),   inline: true },
         { name: 'Region', value: region.toUpperCase(), inline: true },
         { name: 'Result', value: 'Clan not found', inline: false }
       ]);
@@ -647,7 +621,7 @@ client.on('messageCreate', async msg => {
       await updateKosList(msg.channel, 'players');
       await updateKosList(msg.channel, 'priority');
       await sendLog(msg, '⭐ Player Added to Priority (Direct)', LOG_COLORS.PRIORITY, [
-        { name: 'Name',     value: name,             inline: true },
+        { name: 'Name',     value: name,              inline: true },
         { name: 'Username', value: username || 'N/A', inline: true },
         { name: 'Result',   value: 'Added directly to Priority', inline: false }
       ]);
@@ -698,6 +672,51 @@ client.on('interactionCreate', async i => {
     return i.reply({ content: '❌ You are not the owner.', flags: 64 });
   }
 
+  // ---------- /enable ----------
+  if (i.commandName === 'enable') {
+    prefixEnabled = true;
+    return i.reply({ content: '✅ Prefix commands have been **enabled**.', flags: 64 });
+  }
+
+  // ---------- /disable ----------
+  if (i.commandName === 'disable') {
+    prefixEnabled = false;
+    return i.reply({ content: '🔴 Prefix commands have been **disabled**.', flags: 64 });
+  }
+
+  // ---------- /backup ----------
+  if (i.commandName === 'backup') {
+    await i.deferReply({ flags: 64 });
+    if (fs.existsSync(DATA_FILE)) {
+      try {
+        const raw = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+        parseRaw(raw);
+      } catch (e) { console.warn('[/backup] Could not read local data.json:', e.message); }
+    }
+    await pushBackup();
+    return i.editReply({ content: `✅ Backup pushed to <#${BACKUP_CHANNEL}>.` });
+  }
+
+  // ---------- /list ----------
+  if (i.commandName === 'list') {
+    await i.deferReply({ flags: 64 });
+    try {
+      const ch        = await client.channels.fetch(BACKUP_CHANNEL);
+      const messages  = await ch.messages.fetch({ limit: 20 });
+      const backupMsg = messages.find(m => m.attachments.some(a => a.name === 'data.json'));
+      if (!backupMsg) return i.editReply({ content: '❌ No backup found. Use `/backup` first.' });
+      const att = backupMsg.attachments.find(a => a.name === 'data.json');
+      const res  = await fetch(att.url);
+      const raw  = await res.json();
+      parseRaw(raw);
+    } catch (e) {
+      console.error('[/list] Failed:', e.message);
+      return i.editReply({ content: '❌ Failed to load from backup channel.' });
+    }
+    await updateKosList(i.channel, null, true);
+    return i.editReply({ content: '✅ KOS list created from latest backup.' });
+  }
+
   // ---------- /clear ----------
   if (i.commandName === 'clear') {
     await i.deferReply({ flags: 64 });
@@ -715,60 +734,8 @@ client.on('interactionCreate', async i => {
       } while (fetched.size >= 2);
       return i.editReply({ content: `✅ Cleared ${totalDeleted} non-bot message${totalDeleted !== 1 ? 's' : ''}.` });
     } catch (e) {
-      console.error('[/clear] Failed:', e.message);
       return i.editReply({ content: '❌ Failed to clear messages.' });
     }
-  }
-
-  // ---------- /enable ----------
-  if (i.commandName === 'enable') {
-    prefixEnabled = true;
-    return i.reply({ content: '✅ Prefix commands have been **enabled**.', flags: 64 });
-  }
-
-  // ---------- /disable ----------
-  if (i.commandName === 'disable') {
-    prefixEnabled = false;
-    return i.reply({ content: '🔴 Prefix commands have been **disabled**. Users will be told to wait.', flags: 64 });
-  }
-
-  // ---------- /backup ----------
-  if (i.commandName === 'backup') {
-    await i.deferReply({ flags: 64 });
-    if (fs.existsSync(DATA_FILE)) {
-      try {
-        const raw = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-        parseRaw(raw);
-        console.log('[/backup] Reloaded from local data.json');
-      } catch (e) {
-        console.warn('[/backup] Could not read local data.json:', e.message);
-      }
-    }
-    await pushBackup();
-    return i.editReply({ content: `✅ Backup pushed to <#${BACKUP_CHANNEL}> (old messages deleted, fresh backup posted).` });
-  }
-
-  // ---------- /list ----------
-  if (i.commandName === 'list') {
-    await i.deferReply({ flags: 64 });
-    try {
-      const ch        = await client.channels.fetch(BACKUP_CHANNEL);
-      const messages  = await ch.messages.fetch({ limit: 20 });
-      const backupMsg = messages.find(m => m.attachments.some(a => a.name === 'data.json'));
-      if (!backupMsg) {
-        return i.editReply({ content: '❌ No backup found in the backup channel. Use `/backup` first.' });
-      }
-      const att = backupMsg.attachments.find(a => a.name === 'data.json');
-      const res  = await fetch(att.url);
-      const raw  = await res.json();
-      parseRaw(raw);
-      console.log(`[/list] Reloaded from backup msg ${backupMsg.id}`);
-    } catch (e) {
-      console.error('[/list] Failed to reload from backup:', e.message);
-      return i.editReply({ content: '❌ Failed to load from backup channel.' });
-    }
-    await updateKosList(i.channel, null, true);
-    return i.editReply({ content: '✅ KOS list created from latest backup.' });
   }
 
   // ---------- /panel ----------
@@ -790,7 +757,7 @@ client.on('interactionCreate', async i => {
     const role = i.options.getRole('role');
     data.ownerRoleId = role.id;
     saveData();
-    return i.reply({ content: `✅ Owner role set to <@&${role.id}>. Members with this role can use all slash commands.`, flags: 64 });
+    return i.reply({ content: `✅ Owner role set to <@&${role.id}>.`, flags: 64 });
   }
 
   // ---------- /ban ----------
@@ -802,17 +769,15 @@ client.on('interactionCreate', async i => {
     saveData();
     try {
       const logCh = await client.channels.fetch(LOGS_CHANNEL).catch(() => null);
-      if (logCh) {
-        await logCh.send({ embeds: [new EmbedBuilder()
-          .setColor(LOG_COLORS.BAN)
-          .setAuthor({ name: `${i.user.username} (${i.user.id})`, iconURL: getAvatarURL(i.user) })
-          .setTitle('🔨 User Banned from KOS Commands')
-          .addFields({ name: 'Banned User', value: `${target.username} (${target.id})`, inline: true })
-          .setTimestamp()
-        ]}).catch(() => {});
-      }
+      if (logCh) await logCh.send({ embeds: [new EmbedBuilder()
+        .setColor(LOG_COLORS.BAN)
+        .setAuthor({ name: `${i.user.username} (${i.user.id})`, iconURL: getAvatarURL(i.user) })
+        .setTitle('🔨 User Banned from KOS Commands')
+        .addFields({ name: 'Banned User', value: `${target.username} (${target.id})`, inline: true })
+        .setTimestamp()
+      ]}).catch(() => {});
     } catch (e) {}
-    return i.reply({ content: `🔨 **${target.username}** has been banned from using KOS commands.`, flags: 64 });
+    return i.reply({ content: `🔨 **${target.username}** has been banned.`, flags: 64 });
   }
 
   // ---------- /unban ----------
@@ -823,17 +788,15 @@ client.on('interactionCreate', async i => {
     saveData();
     try {
       const logCh = await client.channels.fetch(LOGS_CHANNEL).catch(() => null);
-      if (logCh) {
-        await logCh.send({ embeds: [new EmbedBuilder()
-          .setColor(LOG_COLORS.ADD)
-          .setAuthor({ name: `${i.user.username} (${i.user.id})`, iconURL: getAvatarURL(i.user) })
-          .setTitle('✅ User Unbanned from KOS Commands')
-          .addFields({ name: 'Unbanned User', value: `${target.username} (${target.id})`, inline: true })
-          .setTimestamp()
-        ]}).catch(() => {});
-      }
+      if (logCh) await logCh.send({ embeds: [new EmbedBuilder()
+        .setColor(LOG_COLORS.ADD)
+        .setAuthor({ name: `${i.user.username} (${i.user.id})`, iconURL: getAvatarURL(i.user) })
+        .setTitle('✅ User Unbanned from KOS Commands')
+        .addFields({ name: 'Unbanned User', value: `${target.username} (${target.id})`, inline: true })
+        .setTimestamp()
+      ]}).catch(() => {});
     } catch (e) {}
-    return i.reply({ content: `✅ **${target.username}** has been unbanned from KOS commands.`, flags: 64 });
+    return i.reply({ content: `✅ **${target.username}** has been unbanned.`, flags: 64 });
   }
 });
 
@@ -846,7 +809,7 @@ client.once('ready', async () => {
   console.log(`[Bot] Logged in as ${client.user.tag}`);
   await loadData();
   schedule24hBackup();
-  console.log('[Bot] 24h auto-backup scheduler started.');
+  console.log('[Bot] Ready. 24h auto-backup scheduled.');
 });
 
 client.login(process.env.TOKEN);
