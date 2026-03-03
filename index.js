@@ -222,18 +222,15 @@ function schedule24hBackup() {
 }
 
 let _pendingChanges = 0;
-let _saveTimer = null;
 
 function saveData() {
   _pendingChanges++;
-  if (_pendingChanges >= 5) {
+  console.log(`[SaveData] Edit ${_pendingChanges}/10`);
+  if (_pendingChanges >= 10) {
     _pendingChanges = 0;
-    if (_saveTimer) { clearTimeout(_saveTimer); _saveTimer = null; }
+    console.log('[SaveData] 10 edits reached — pushing backup');
     pushBackup();
-    return;
   }
-  if (_saveTimer) clearTimeout(_saveTimer);
-  _saveTimer = setTimeout(() => pushBackup(), 1000);
 }
 
 async function loadData() {
@@ -727,19 +724,35 @@ client.on('interactionCreate', async i => {
     await i.deferReply({ flags: 64 });
     try {
       let totalDeleted = 0;
+      const twoWeeksAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
+
       let fetched;
       do {
         fetched = await i.channel.messages.fetch({ limit: 100 });
         const nonBotMessages = fetched.filter(m => m.author.id !== client.user.id);
         if (nonBotMessages.size === 0) break;
-        for (const m of nonBotMessages.values()) {
+
+        // Bulk delete messages under 14 days old (Discord API limit)
+        const bulk = nonBotMessages.filter(m => m.createdTimestamp > twoWeeksAgo);
+        const old  = nonBotMessages.filter(m => m.createdTimestamp <= twoWeeksAgo);
+
+        if (bulk.size >= 2) {
+          await i.channel.bulkDelete(bulk, true).catch(() => {});
+          totalDeleted += bulk.size;
+        } else if (bulk.size === 1) {
+          await bulk.first().delete().catch(() => {});
+          totalDeleted += 1;
+        }
+
+        for (const m of old.values()) {
           await m.delete().catch(() => {});
           totalDeleted++;
         }
       } while (fetched.size >= 2);
-      return i.editReply({ content: `✅ Cleared ${totalDeleted} non-bot message${totalDeleted !== 1 ? 's' : ''}.` });
+
+      return i.editReply({ content: `\u2705 Cleared ${totalDeleted} non-bot message${totalDeleted !== 1 ? 's' : ''}.` });
     } catch (e) {
-      return i.editReply({ content: '❌ Failed to clear messages.' });
+      return i.editReply({ content: '\u274c Failed to clear messages.' });
     }
   }
 
