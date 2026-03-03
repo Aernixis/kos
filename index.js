@@ -13,26 +13,31 @@ const client = new Client({
 });
 
 /* ===================== CONSTANTS ===================== */
-const OWNER_ID         = '1283217337084018749';
-const PRIORITY_ROLE_ID = '1412837397607092405';
-const DATA_FILE        = './data.json';
-const SPECIAL_USER_ID  = '760369177180897290';
-const SPECIAL_GIF_URL  = 'https://tenor.com/view/chainsawman-chainsaw-man-reze-reze-arc-chainsaw-man-reze-gif-13447210726051357373';
+const OWNER_ID            = '1283217337084018749';
+const PRIORITY_ROLE_ID    = '1412837397607092405';
+const DATA_FILE           = './data.json';
+const SPECIAL_USER_ID     = '760369177180897290';
+const SPECIAL_GIF_URL     = 'https://tenor.com/view/chainsawman-chainsaw-man-reze-reze-arc-chainsaw-man-reze-gif-13447210726051357373';
+
+// Fixed channel IDs — no longer configurable via slash commands
+const SUBMISSION_CHANNEL  = '1450867784543113318';
+const LOGS_CHANNEL        = '1473800222927880223';
+const BACKUP_CHANNEL      = '1475960780976292051';
+
+/* ===================== STATE ===================== */
+let prefixEnabled = true; // toggled by /enable and /disable
 
 /* ===================== DATA ===================== */
 let data = {
-  players:           new Map(),
-  priority:          new Set(),
-  clans:             new Set(),
-  bannedUsers:       new Set(),
-  submissionChannel: null,
-  logsChannel:       null,
-  backupChannel:     null,
-  backupMessageId:   null,
-  listMessages:      { players: [], priority: [], clans: [] },
-  panelMessages:     { gif: null, tutorial: null },
-  ownerRoleId:       null,
-  revision:          0
+  players:         new Map(),
+  priority:        new Set(),
+  clans:           new Set(),
+  bannedUsers:     new Set(),
+  backupMessageId: null,
+  listMessages:    { players: [], priority: [], clans: [] },
+  panelMessages:   { gif: null, tutorial: null },
+  ownerRoleId:     null,
+  revision:        0
 };
 
 /* ===================== HELPERS ===================== */
@@ -57,21 +62,17 @@ async function reply(msg, text, ms = 3000) {
   setTimeout(() => { m.delete().catch(() => {}); msg.delete().catch(() => {}); }, ms);
 }
 
-// Treat empty string, "N/A", null, undefined as no username
 function cleanUsername(u) {
   if (!u || u.trim() === '' || u === 'N/A') return null;
   return u.trim();
 }
 
-// The map key for a player
 function playerKey(p) {
   return cleanUsername(p.username) || p.name;
 }
 
-// Case-insensitive alphabetical comparator
 const alpha = (a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' });
 
-// Sort all data in memory alphabetically so data.json backup is always clean
 function sortData() {
   const sortedPlayers = [...data.players.values()]
     .sort((a, b) => alpha(a.name, b.name));
@@ -98,16 +99,10 @@ function findPlayer(identifier) {
   return null;
 }
 
-/**
- * Removes ALL traces of a player from both data.players and data.priority,
- * matching by name OR username (case-insensitive).
- * Returns an array of all player objects that were removed.
- */
 function removePlayerEverywhere(identifier) {
   const id = identifier.toLowerCase();
   const removed = [];
 
-  // Collect and delete all matching entries from data.players
   for (const [key, player] of [...data.players.entries()]) {
     if (
       player.name.toLowerCase() === id ||
@@ -119,21 +114,18 @@ function removePlayerEverywhere(identifier) {
     }
   }
 
-  // Build a set of all identifiers from removed players to wipe priority thoroughly
   const removedIdentifiers = new Set([id]);
   for (const p of removed) {
     removedIdentifiers.add(p.name.toLowerCase());
     if (p.username) removedIdentifiers.add(p.username.toLowerCase());
   }
 
-  // Wipe all matching keys from priority
   for (const key of [...data.priority]) {
     if (removedIdentifiers.has(key.toLowerCase())) {
       data.priority.delete(key);
     }
   }
 
-  // If nothing found in players, check for an orphaned priority-only entry
   if (removed.length === 0) {
     let foundOrphaned = false;
     for (const key of [...data.priority]) {
@@ -159,17 +151,14 @@ function buildPayload() {
       username: cleanUsername(p.username) || null,
       addedBy:  p.addedBy
     })),
-    priority:          [...data.priority],
-    clans:             [...data.clans],
-    bannedUsers:       [...data.bannedUsers],
-    submissionChannel: data.submissionChannel,
-    logsChannel:       data.logsChannel,
-    backupChannel:     data.backupChannel,
-    backupMessageId:   data.backupMessageId,
-    listMessages:      data.listMessages,
-    panelMessages:     data.panelMessages,
-    ownerRoleId:       data.ownerRoleId,
-    revision:          data.revision
+    priority:        [...data.priority],
+    clans:           [...data.clans],
+    bannedUsers:     [...data.bannedUsers],
+    backupMessageId: data.backupMessageId,
+    listMessages:    data.listMessages,
+    panelMessages:   data.panelMessages,
+    ownerRoleId:     data.ownerRoleId,
+    revision:        data.revision
   }, null, 2);
 }
 
@@ -187,13 +176,12 @@ function parseRaw(raw) {
   if (raw.topPriority) raw.topPriority.forEach(u => { if (u) data.priority.add(u); });
   if (raw.priority)    raw.priority.forEach(u => { if (u) data.priority.add(u); });
 
-  data.clans             = new Set(raw.clans       || []);
-  data.bannedUsers       = new Set(raw.bannedUsers || []);
-  data.submissionChannel = raw.submissionChannelId || raw.submissionChannel || null;
-  data.logsChannel       = raw.logsChannel       || null;
-  data.backupChannel     = raw.backupChannel     || process.env.BACKUP_CHANNEL_ID || null;
-  data.backupMessageId   = raw.backupMessageId   || null;
-  data.ownerRoleId       = raw.ownerRoleId       || null;
+  data.clans       = new Set(raw.clans       || []);
+  data.bannedUsers = new Set(raw.bannedUsers || []);
+
+  // Always use fixed channel IDs — ignore any stored values
+  data.backupMessageId = raw.backupMessageId || null;
+  data.ownerRoleId     = raw.ownerRoleId     || null;
 
   if (raw.messages || raw.listMessages) {
     const msgs = raw.messages || raw.listMessages;
@@ -211,36 +199,50 @@ function parseRaw(raw) {
 }
 
 /* ===================== SAVE / LOAD ===================== */
+
+/**
+ * Deletes ALL messages in the backup channel, then posts a fresh backup.
+ */
 async function pushBackup() {
   const payload = buildPayload();
 
   try { fs.writeFileSync(DATA_FILE, payload); } catch (e) { console.error('[Backup] Local write failed:', e.message); }
 
-  if (!data.backupChannel) return;
   try {
-    const ch = await client.channels.fetch(data.backupChannel).catch(() => null);
+    const ch = await client.channels.fetch(BACKUP_CHANNEL).catch(() => null);
     if (!ch) return;
 
+    // Delete all existing messages in the backup channel
+    let fetched;
+    do {
+      fetched = await ch.messages.fetch({ limit: 100 });
+      if (fetched.size === 0) break;
+      for (const m of fetched.values()) {
+        await m.delete().catch(() => {});
+      }
+    } while (fetched.size >= 2);
+
+    // Post fresh backup
     const buf        = Buffer.from(payload, 'utf8');
     const attachment = new AttachmentBuilder(buf, { name: 'data.json' });
     const content    = `Last save: <t:${Math.floor(Date.now() / 1000)}:F>`;
-
-    if (data.backupMessageId) {
-      const existing = await ch.messages.fetch(data.backupMessageId).catch(() => null);
-      if (existing) {
-        await existing.edit({ content, files: [attachment] });
-        return;
-      }
-    }
-
-    const sent = await ch.send({ content, files: [attachment] });
+    const sent       = await ch.send({ content, files: [attachment] });
     data.backupMessageId = sent.id;
     fs.writeFileSync(DATA_FILE, buildPayload());
+    console.log(`[Backup] Pushed fresh backup (msg ${sent.id}) at ${new Date().toISOString()}`);
   } catch (e) { console.error('[Backup] Discord push failed:', e.message); }
 }
 
+/* ===================== 24-HOUR AUTO-BACKUP ===================== */
+function schedule24hBackup() {
+  const INTERVAL = 24 * 60 * 60 * 1000; // 24 hours in ms
+  setInterval(async () => {
+    console.log(`[AutoBackup] 24h interval — pushing backup at ${new Date().toISOString()}`);
+    await pushBackup();
+  }, INTERVAL);
+}
+
 /* ===================== CHANGE-TRIGGERED AUTO-SAVE ===================== */
-// Pushes a backup to Discord every 5 list changes
 let _pendingChanges = 0;
 function trackChange() {
   _pendingChanges++;
@@ -253,9 +255,9 @@ function trackChange() {
 
 let _saveTimer = null;
 function saveData() {
-  trackChange();                             // count toward 5-change Discord backup
+  trackChange();
   if (_saveTimer) clearTimeout(_saveTimer);
-  _saveTimer = setTimeout(() => pushBackup(), 1000); // debounce local write
+  _saveTimer = setTimeout(() => pushBackup(), 1000);
 }
 
 async function loadData() {
@@ -270,20 +272,13 @@ async function loadData() {
     }
   }
 
-  const channelId = process.env.BACKUP_CHANNEL_ID;
-  if (!channelId) {
-    console.warn('[Load] No BACKUP_CHANNEL_ID and no local file. Starting fresh.');
-    return;
-  }
-
   try {
-    const ch        = await client.channels.fetch(channelId);
+    const ch        = await client.channels.fetch(BACKUP_CHANNEL);
     const messages  = await ch.messages.fetch({ limit: 20 });
     const backupMsg = messages.find(m => m.attachments.some(a => a.name === 'data.json'));
 
     if (!backupMsg) {
-      console.warn('[Load] No backup found. Starting fresh.');
-      data.backupChannel = channelId;
+      console.warn('[Load] No backup found in channel. Starting fresh.');
       return;
     }
 
@@ -291,7 +286,6 @@ async function loadData() {
     const res  = await fetch(att.url);
     const raw  = await res.json();
     parseRaw(raw);
-    data.backupChannel   = channelId;
     data.backupMessageId = backupMsg.id;
     console.log(`[Load] Loaded from Discord backup (msg ${backupMsg.id})`);
     fs.writeFileSync(DATA_FILE, buildPayload());
@@ -311,7 +305,6 @@ const LOG_COLORS = {
 
 function getAvatarURL(user) {
   if (!user.avatar) return user.defaultAvatarURL;
-  // Animated avatars have a hash starting with "a_" — request .gif for those
   if (user.avatar.startsWith('a_')) {
     return user.displayAvatarURL({ extension: 'gif', forceStatic: false, size: 128 });
   }
@@ -319,24 +312,21 @@ function getAvatarURL(user) {
 }
 
 async function sendLog(msg, action, color, fields) {
-  if (!data.logsChannel) return;
-  const logChannel = await client.channels.fetch(data.logsChannel).catch(() => null);
-  if (!logChannel) return;
-  const embed = new EmbedBuilder()
-    .setColor(color)
-    .setAuthor({ name: `${msg.author.username} (${msg.author.id})`, iconURL: getAvatarURL(msg.author) })
-    .setTitle(action)
-    .addFields(fields)
-    .setTimestamp()
-    .setFooter({ text: `#${msg.channel.name}` });
-  await logChannel.send({ embeds: [embed] }).catch(() => {});
+  try {
+    const logChannel = await client.channels.fetch(LOGS_CHANNEL).catch(() => null);
+    if (!logChannel) return;
+    const embed = new EmbedBuilder()
+      .setColor(color)
+      .setAuthor({ name: `${msg.author.username} (${msg.author.id})`, iconURL: getAvatarURL(msg.author) })
+      .setTitle(action)
+      .addFields(fields)
+      .setTimestamp()
+      .setFooter({ text: `#${msg.channel.name}` });
+    await logChannel.send({ embeds: [embed] }).catch(() => {});
+  } catch (e) { console.error('[Log] Failed to send log:', e.message); }
 }
 
 /* ===================== FORMATTERS ===================== */
-
-// Format a player row:
-//   With username:    "name @username"
-//   Without username: "name"
 function formatPlayerRow(name, username) {
   return username ? `${name} @${username}` : name;
 }
@@ -356,7 +346,6 @@ function formatPriority() {
       if (!p) p = [...data.players.values()].find(pl => playerKey(pl).toLowerCase() === u.toLowerCase());
       return {
         sortKey: p ? p.name : u,
-        // Never show N/A — only append @username if one exists
         display: p ? formatPlayerRow(p.name, p.username) : u
       };
     })
@@ -498,7 +487,7 @@ client.on('messageCreate', async msg => {
   const args = msg.content.trim().split(/\s+/);
   const cmd  = args.shift().toLowerCase();
 
-  // Special user handler
+  // Special user handler (always fires regardless of enabled state)
   if (msg.author.id === SPECIAL_USER_ID) {
     await msg.channel.send(`<@${msg.author.id}> fuck u kid`);
     await msg.channel.send(SPECIAL_GIF_URL);
@@ -506,12 +495,19 @@ client.on('messageCreate', async msg => {
     return;
   }
 
+  // Disabled state — respond and bail (owner can still use commands)
+  if (!prefixEnabled && msg.author.id !== OWNER_ID) {
+    const m = await msg.channel.send('schwanz is disabled im fixing it plz wait');
+    setTimeout(() => { m.delete().catch(() => {}); msg.delete().catch(() => {}); }, 5000);
+    return;
+  }
+
   if (data.bannedUsers.has(msg.author.id) && msg.author.id !== OWNER_ID) {
     return reply(msg, 'You have been banned from using KOS commands.');
   }
 
-  if (data.submissionChannel && msg.channel.id !== data.submissionChannel) {
-    const m = await msg.channel.send(`<@${msg.author.id}> Use KOS commands in <#${data.submissionChannel}>.`);
+  if (msg.channel.id !== SUBMISSION_CHANNEL) {
+    const m = await msg.channel.send(`<@${msg.author.id}> Use KOS commands in <#${SUBMISSION_CHANNEL}>.`);
     setTimeout(() => { m.delete().catch(() => {}); msg.delete().catch(() => {}); }, 4000);
     return;
   }
@@ -550,7 +546,6 @@ client.on('messageCreate', async msg => {
     const [identifier] = args;
     if (!identifier) return reply(msg, 'Missing name.');
 
-    // Find player first for permission check + logging info
     const playerCheck = findPlayer(identifier);
     if (!playerCheck) {
       await sendLog(msg, '⚠️ Remove Player — Not Found', LOG_COLORS.ERROR, [
@@ -560,7 +555,6 @@ client.on('messageCreate', async msg => {
       return reply(msg, 'Player not found.');
     }
 
-    // Permission check (skip for orphaned priority-only entries)
     if (
       !playerCheck._orphaned &&
       playerCheck.addedBy !== msg.author.id &&
@@ -574,7 +568,6 @@ client.on('messageCreate', async msg => {
       return reply(msg, "You didn't add this player.");
     }
 
-    // Remove ALL traces from both data.players and data.priority
     const removedList = removePlayerEverywhere(identifier);
 
     await updateKosList(msg.channel, 'players');
@@ -680,7 +673,6 @@ client.on('messageCreate', async msg => {
     }
 
     if (cmd === '^pr') {
-      // Remove from priority only — keep the player in data.players
       const identifiers = new Set([playerKey(player).toLowerCase(), player.name.toLowerCase()]);
       if (player.username) identifiers.add(player.username.toLowerCase());
       for (const k of [...data.priority]) {
@@ -706,18 +698,41 @@ client.on('interactionCreate', async i => {
     return i.reply({ content: '❌ You are not the owner.', flags: 64 });
   }
 
-  if (i.commandName === 'submission') {
-    data.submissionChannel = i.channel.id;
-    saveData();
-    return i.reply({ content: `✅ KOS submission commands locked to <#${i.channel.id}>`, flags: 64 });
+  // ---------- /clear ----------
+  if (i.commandName === 'clear') {
+    await i.deferReply({ flags: 64 });
+    try {
+      let totalDeleted = 0;
+      let fetched;
+      do {
+        fetched = await i.channel.messages.fetch({ limit: 100 });
+        const nonBotMessages = fetched.filter(m => m.author.id !== client.user.id);
+        if (nonBotMessages.size === 0) break;
+        for (const m of nonBotMessages.values()) {
+          await m.delete().catch(() => {});
+          totalDeleted++;
+        }
+      } while (fetched.size >= 2);
+      return i.editReply({ content: `✅ Cleared ${totalDeleted} non-bot message${totalDeleted !== 1 ? 's' : ''}.` });
+    } catch (e) {
+      console.error('[/clear] Failed:', e.message);
+      return i.editReply({ content: '❌ Failed to clear messages.' });
+    }
   }
 
-  if (i.commandName === 'logs') {
-    data.logsChannel = i.channel.id;
-    saveData();
-    return i.reply({ content: `✅ KOS logs will be sent to <#${i.channel.id}>`, flags: 64 });
+  // ---------- /enable ----------
+  if (i.commandName === 'enable') {
+    prefixEnabled = true;
+    return i.reply({ content: '✅ Prefix commands have been **enabled**.', flags: 64 });
   }
 
+  // ---------- /disable ----------
+  if (i.commandName === 'disable') {
+    prefixEnabled = false;
+    return i.reply({ content: '🔴 Prefix commands have been **disabled**. Users will be told to wait.', flags: 64 });
+  }
+
+  // ---------- /backup ----------
   if (i.commandName === 'backup') {
     await i.deferReply({ flags: 64 });
     if (fs.existsSync(DATA_FILE)) {
@@ -729,29 +744,19 @@ client.on('interactionCreate', async i => {
         console.warn('[/backup] Could not read local data.json:', e.message);
       }
     }
-    data.backupChannel   = i.channel.id;
-    data.backupMessageId = null;
     await pushBackup();
-    return i.editReply({ content: `✅ Backup channel set to <#${i.channel.id}>. Current data.json pushed as backup.` });
+    return i.editReply({ content: `✅ Backup pushed to <#${BACKUP_CHANNEL}> (old messages deleted, fresh backup posted).` });
   }
 
-  if (i.commandName === 'save') {
-    await i.deferReply({ flags: 64 });
-    await pushBackup();
-    return i.editReply({ content: '✅ List manually saved to backup channel.' });
-  }
-
+  // ---------- /list ----------
   if (i.commandName === 'list') {
     await i.deferReply({ flags: 64 });
-    if (!data.backupChannel) {
-      return i.editReply({ content: '❌ No backup channel set. Use `/backup` first.' });
-    }
     try {
-      const ch        = await client.channels.fetch(data.backupChannel);
+      const ch        = await client.channels.fetch(BACKUP_CHANNEL);
       const messages  = await ch.messages.fetch({ limit: 20 });
       const backupMsg = messages.find(m => m.attachments.some(a => a.name === 'data.json'));
       if (!backupMsg) {
-        return i.editReply({ content: '❌ No backup found in the backup channel. Use `/save` first.' });
+        return i.editReply({ content: '❌ No backup found in the backup channel. Use `/backup` first.' });
       }
       const att = backupMsg.attachments.find(a => a.name === 'data.json');
       const res  = await fetch(att.url);
@@ -766,18 +771,21 @@ client.on('interactionCreate', async i => {
     return i.editReply({ content: '✅ KOS list created from latest backup.' });
   }
 
+  // ---------- /panel ----------
   if (i.commandName === 'panel') {
     await i.deferReply({ flags: 64 });
     await updatePanel(i.channel);
     return i.editReply({ content: '✅ Panel updated.' });
   }
 
+  // ---------- /say ----------
   if (i.commandName === 'say') {
     const text = i.options.getString('text');
     await i.channel.send(text);
     return i.reply({ content: '✅ Message sent.', flags: 64 });
   }
 
+  // ---------- /setrole ----------
   if (i.commandName === 'setrole') {
     const role = i.options.getRole('role');
     data.ownerRoleId = role.id;
@@ -785,14 +793,15 @@ client.on('interactionCreate', async i => {
     return i.reply({ content: `✅ Owner role set to <@&${role.id}>. Members with this role can use all slash commands.`, flags: 64 });
   }
 
+  // ---------- /ban ----------
   if (i.commandName === 'ban') {
     const target = i.options.getUser('user');
     if (target.id === OWNER_ID)          return i.reply({ content: '❌ You cannot ban the bot owner.', flags: 64 });
     if (data.bannedUsers.has(target.id)) return i.reply({ content: `⚠️ ${target.username} is already banned.`, flags: 64 });
     data.bannedUsers.add(target.id);
     saveData();
-    if (data.logsChannel) {
-      const logCh = await client.channels.fetch(data.logsChannel).catch(() => null);
+    try {
+      const logCh = await client.channels.fetch(LOGS_CHANNEL).catch(() => null);
       if (logCh) {
         await logCh.send({ embeds: [new EmbedBuilder()
           .setColor(LOG_COLORS.BAN)
@@ -802,17 +811,18 @@ client.on('interactionCreate', async i => {
           .setTimestamp()
         ]}).catch(() => {});
       }
-    }
+    } catch (e) {}
     return i.reply({ content: `🔨 **${target.username}** has been banned from using KOS commands.`, flags: 64 });
   }
 
+  // ---------- /unban ----------
   if (i.commandName === 'unban') {
     const target = i.options.getUser('user');
     if (!data.bannedUsers.has(target.id)) return i.reply({ content: `⚠️ ${target.username} is not currently banned.`, flags: 64 });
     data.bannedUsers.delete(target.id);
     saveData();
-    if (data.logsChannel) {
-      const logCh = await client.channels.fetch(data.logsChannel).catch(() => null);
+    try {
+      const logCh = await client.channels.fetch(LOGS_CHANNEL).catch(() => null);
       if (logCh) {
         await logCh.send({ embeds: [new EmbedBuilder()
           .setColor(LOG_COLORS.ADD)
@@ -822,7 +832,7 @@ client.on('interactionCreate', async i => {
           .setTimestamp()
         ]}).catch(() => {});
       }
-    }
+    } catch (e) {}
     return i.reply({ content: `✅ **${target.username}** has been unbanned from KOS commands.`, flags: 64 });
   }
 });
@@ -835,6 +845,8 @@ require('http').createServer((req, res) => res.end('Bot running')).listen(PORT);
 client.once('ready', async () => {
   console.log(`[Bot] Logged in as ${client.user.tag}`);
   await loadData();
+  schedule24hBackup();
+  console.log('[Bot] 24h auto-backup scheduler started.');
 });
 
 client.login(process.env.TOKEN);
