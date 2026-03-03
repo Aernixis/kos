@@ -3,7 +3,6 @@ const { REST, Routes, SlashCommandBuilder } = require('discord.js');
 
 const CLIENT_ID = '1470922510496436378';
 const TOKEN = process.env.TOKEN;
-
 const GUILD_IDS = [
   '1412818267910705225',
   '1470930306596081699'
@@ -13,27 +12,21 @@ const commands = [
   new SlashCommandBuilder()
     .setName('panel')
     .setDescription('Post or update the KOS panel'),
-
   new SlashCommandBuilder()
     .setName('list')
-    .setDescription('Post or update the KOS list'),
-
-  new SlashCommandBuilder()
-    .setName('submission')
-    .setDescription('Set this channel as the KOS submission channel'),
-
-  new SlashCommandBuilder()
-    .setName('logs')
-    .setDescription('Set this channel as the KOS logs channel'),
-
+    .setDescription('Post or update the KOS list from the latest backup'),
   new SlashCommandBuilder()
     .setName('backup')
-    .setDescription('Set this channel as the data backup channel'),
-
+    .setDescription('Delete old backup and push a fresh one to the backup channel'),
   new SlashCommandBuilder()
-    .setName('save')
-    .setDescription('Manually save the current list to the backup channel'),
-
+    .setName('clear')
+    .setDescription('Delete all non-bot messages in this channel'),
+  new SlashCommandBuilder()
+    .setName('enable')
+    .setDescription('Enable prefix (^) commands'),
+  new SlashCommandBuilder()
+    .setName('disable')
+    .setDescription('Disable prefix (^) commands'),
   new SlashCommandBuilder()
     .setName('say')
     .setDescription('Make the bot send a message in this channel')
@@ -43,7 +36,15 @@ const commands = [
         .setDescription('The message to send')
         .setRequired(true)
     ),
-
+  new SlashCommandBuilder()
+    .setName('setrole')
+    .setDescription('Set a role that can use owner slash commands')
+    .addRoleOption(option =>
+      option
+        .setName('role')
+        .setDescription('The role to grant owner permissions')
+        .setRequired(true)
+    ),
   new SlashCommandBuilder()
     .setName('ban')
     .setDescription('Ban a user from using KOS commands')
@@ -53,7 +54,6 @@ const commands = [
         .setDescription('The user to ban')
         .setRequired(true)
     ),
-
   new SlashCommandBuilder()
     .setName('unban')
     .setDescription('Unban a user from using KOS commands')
