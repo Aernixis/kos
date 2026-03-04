@@ -592,9 +592,12 @@ async function handleCommand(msg) {
     const player = { name, username, addedBy: msg.author.id };
     data.players.set(key, player);
     indexAdd(player);
+    // Only touch priority section if this key was an orphaned priority entry
+    const wasInPriority = data.priority.has(key) || [...data.priority].some(k => k.toLowerCase() === key.toLowerCase());
     data.priority.delete(key);
+    const kaSections = wasInPriority ? ['players', 'priority'] : ['players'];
     await Promise.all([
-      updateKosList(['players', 'priority']),
+      updateKosList(kaSections),
       sendLog(msg, '✅ Player Added', LOG_COLORS.ADD, [
         { name: 'Name', value: name, inline: true },
         { name: 'Username', value: username || 'N/A', inline: true },
@@ -664,11 +667,15 @@ async function handleCommand(msg) {
     const removeKey = playerKey(playerCheck);
     const removed   = data.players.get(removeKey);
     if (removed) { data.players.delete(removeKey); indexRemove(removed); }
-    for (const k of [...data.priority]) { if (k.toLowerCase() === removeKey.toLowerCase()) data.priority.delete(k); }
+    // Only update priority section if this player was actually in it
+    const krKeyLower = removeKey.toLowerCase();
+    const wasInPriority = [...data.priority].some(k => k.toLowerCase() === krKeyLower);
+    for (const k of [...data.priority]) { if (k.toLowerCase() === krKeyLower) data.priority.delete(k); }
+    const krSections = wasInPriority ? ['players', 'priority'] : ['players'];
 
     const primary = removed || playerCheck;
     await Promise.all([
-      updateKosList(['players', 'priority']),
+      updateKosList(krSections),
       sendLog(msg, '🗑️ Player Removed', LOG_COLORS.REMOVE, [
         { name: 'Name', value: primary.name, inline: true },
         { name: 'Username', value: primary.username || 'N/A', inline: true },
