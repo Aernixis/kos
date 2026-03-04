@@ -391,26 +391,31 @@ function splitIntoChunks(title, content, revMarker) {
   return chunks.length ? chunks : [`${header}None${footer}${revMarker}`];
 }
 
-async function updateKosList(sectionToUpdate = null, forceCreate = false) {
+async function updateKosList(sectionsArg = null, forceCreate = false) {
   const channel = await client.channels.fetch(SUBMISSION_CHANNEL).catch(() => null);
   if (!channel) { console.error('[updateKosList] Could not fetch SUBMISSION_CHANNEL'); return; }
 
-  const sections = [
-    ['players',  '\u2013\u2013\u2013\u2013\u2013\u2013 PLAYERS \u2013\u2013\u2013\u2013\u2013\u2013',  formatPlayers],
-    ['priority', '\u2013\u2013\u2013\u2013\u2013\u2013 PRIORITY \u2013\u2013\u2013\u2013\u2013\u2013', formatPriority],
-    ['clans',    '\u2013\u2013\u2013\u2013\u2013\u2013 CLANS \u2013\u2013\u2013\u2013\u2013\u2013',    formatClans]
-  ];
+  // Accept a single string or array of section keys
+  const requested = sectionsArg
+    ? (Array.isArray(sectionsArg) ? sectionsArg : [sectionsArg])
+    : ['players', 'priority', 'clans'];
 
-  for (const [key, title, getContent] of sections) {
-    if (sectionToUpdate && key !== sectionToUpdate) continue;
-    if (updatingSections[key]) continue;
+  const sectionDefs = {
+    players:  ['\u2013\u2013\u2013\u2013\u2013\u2013 PLAYERS \u2013\u2013\u2013\u2013\u2013\u2013',  formatPlayers],
+    priority: ['\u2013\u2013\u2013\u2013\u2013\u2013 PRIORITY \u2013\u2013\u2013\u2013\u2013\u2013', formatPriority],
+    clans:    ['\u2013\u2013\u2013\u2013\u2013\u2013 CLANS \u2013\u2013\u2013\u2013\u2013\u2013',    formatClans]
+  };
+
+  await Promise.all(requested.map(async key => {
+    if (!sectionDefs[key]) return;
+    if (updatingSections[key]) return;
     updatingSections[key] = true;
+    const [title, getContent] = sectionDefs[key];
     try {
       const chunks    = splitIntoChunks(title, getContent(), rev());
       const storedIds = [...(data.listMessages[key] || [])];
 
       if (forceCreate) {
-        // /list only: delete old messages and post fresh ones
         for (const id of storedIds) {
           const m = await channel.messages.fetch(id).catch(() => null);
           if (m) await m.delete().catch(() => {});
@@ -423,13 +428,11 @@ async function updateKosList(sectionToUpdate = null, forceCreate = false) {
         data.listMessages[key] = newIds;
 
       } else {
-        // Normal update: ONLY edit. Never send new messages.
         if (storedIds.length === 0) {
           console.warn(`[updateKosList] No stored IDs for "${key}" — run /list to create the list.`);
-          continue;
+          return;
         }
 
-        // Verify all stored IDs still exist
         const verifiedIds = [];
         for (const id of storedIds) {
           const m = await channel.messages.fetch(id).catch(() => null);
@@ -439,10 +442,9 @@ async function updateKosList(sectionToUpdate = null, forceCreate = false) {
         if (verifiedIds.length === 0) {
           console.warn(`[updateKosList] All "${key}" messages are gone — run /list to recreate.`);
           data.listMessages[key] = [];
-          continue;
+          return;
         }
 
-        // Fit all chunks into the available slots by merging overflow into the last slot
         let slottedChunks;
         if (chunks.length <= verifiedIds.length) {
           slottedChunks = chunks;
@@ -455,19 +457,20 @@ async function updateKosList(sectionToUpdate = null, forceCreate = false) {
           slottedChunks.push(`\`\`\`${title}\n${overflow}\n\`\`\`${revMarker}`);
         }
 
-        for (let i = 0; i < verifiedIds.length; i++) {
-          const m = await channel.messages.fetch(verifiedIds[i]).catch(() => null);
-          if (!m) continue;
+        await Promise.all(verifiedIds.map(async (id, i) => {
+          const m = await channel.messages.fetch(id).catch(() => null);
+          if (!m) return;
           const newContent = i < slottedChunks.length ? slottedChunks[i] : '\u200B';
           await m.edit(newContent).catch(() => {});
-        }
+        }));
 
         data.listMessages[key] = verifiedIds;
       }
     } finally {
       updatingSections[key] = false;
     }
-  }
+  }));
+
   saveData();
 }
 
@@ -580,7 +583,7 @@ client.on('messageCreate', async msg => {
 
     data.players.set(key, { name, username, addedBy: msg.author.id });
     data.priority.delete(key);
-    await updateKosList('players');
+    await updateKosList(['players', 'priority']);
     await sendLog(msg, '✅ Player Added', LOG_COLORS.ADD, [
       { name: 'Name',     value: name,              inline: true },
       { name: 'Username', value: username || 'N/A', inline: true },
@@ -650,8 +653,7 @@ client.on('messageCreate', async msg => {
     // Remove by exact key (username if present, else name)
     const removeKey = playerCheck.username || playerCheck.name;
     const removedList = removePlayerEverywhere(removeKey);
-    await updateKosList('players');
-    await updateKosList('priority');
+    await updateKosList(['players', 'priority']);
 
     const primary = removedList[0] || playerCheck;
     await sendLog(msg, '🗑️ Player Removed', LOG_COLORS.REMOVE, [
@@ -722,8 +724,7 @@ client.on('messageCreate', async msg => {
       if (data.players.has(key)) return reply(msg, `Player already exists: ${key}`);
       data.players.set(key, { name, username, addedBy: msg.author.id });
       data.priority.add(key);
-      await updateKosList('players');
-      await updateKosList('priority');
+      await updateKosList(['players', 'priority']);
       await sendLog(msg, '⭐ Player Added to Priority (Direct)', LOG_COLORS.PRIORITY, [
         { name: 'Name',     value: name,              inline: true },
         { name: 'Username', value: username || 'N/A', inline: true },
@@ -740,8 +741,7 @@ client.on('messageCreate', async msg => {
     if (cmd === '^p') {
       const key = playerKey(player);
       data.priority.add(key);
-      await updateKosList('players');
-      await updateKosList('priority');
+      await updateKosList(['players', 'priority']);
       await sendLog(msg, '⭐ Player Promoted to Priority', LOG_COLORS.PRIORITY, [
         { name: 'Name',     value: player.name,              inline: true },
         { name: 'Username', value: player.username || 'N/A', inline: true },
@@ -756,8 +756,11 @@ client.on('messageCreate', async msg => {
       for (const k of [...data.priority]) {
         if (identifiers.has(k.toLowerCase())) data.priority.delete(k);
       }
-      if (!player._orphaned) await updateKosList('players');
-      await updateKosList('priority');
+      if (!player._orphaned) {
+        await updateKosList(['players', 'priority']);
+      } else {
+        await updateKosList(['priority']);
+      }
       await sendLog(msg, '🔻 Player Removed from Priority', LOG_COLORS.REMOVE, [
         { name: 'Name',     value: player.name,              inline: true },
         { name: 'Username', value: player.username || 'N/A', inline: true },
