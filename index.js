@@ -568,15 +568,14 @@ client.on('messageCreate', async msg => {
     const username = cleanUsername(rawUsername) || null;
     const key      = username || name;
 
-    const duplicate = data.players.has(key)
-      || [...data.players.values()].find(p => p.name.toLowerCase() === name.toLowerCase());
-    if (duplicate) {
+    // Block only if the exact key (username if provided, else name) already exists
+    if (data.players.has(key)) {
       await sendLog(msg, '⚠️ Add Player — Already Exists', LOG_COLORS.ERROR, [
         { name: 'Name',     value: name,              inline: true },
         { name: 'Username', value: username || 'N/A', inline: true },
         { name: 'Result',   value: 'Already on KOS list', inline: false }
       ]);
-      return reply(msg, `Player already in KOS: ${name}`);
+      return reply(msg, `Player already in KOS: ${key}`);
     }
 
     data.players.set(key, { name, username, addedBy: msg.author.id });
@@ -687,9 +686,7 @@ client.on('messageCreate', async msg => {
       if (!name) return reply(msg, 'Missing name.');
       const username = cleanUsername(rawUsername) || null;
       const key      = username || name;
-      const duplicate = data.players.has(key)
-        || [...data.players.values()].find(p => p.name.toLowerCase() === name.toLowerCase());
-      if (duplicate) return reply(msg, `Player already exists: ${name}`);
+      if (data.players.has(key)) return reply(msg, `Player already exists: ${key}`);
       data.players.set(key, { name, username, addedBy: msg.author.id });
       data.priority.add(key);
       await updateKosList('players');
