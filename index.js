@@ -527,12 +527,13 @@ Thank you for being a part of YX!
 
 /* ===================== PREFIX COMMANDS ===================== */
 client.on('messageCreate', async msg => {
-  if (msg.author.bot) return;
-  if (!msg.content.startsWith('^')) return;
-
+  // Atomic dedup — must be the very first check before any async gap
   if (handledMessages.has(msg.id)) return;
   handledMessages.add(msg.id);
   setTimeout(() => handledMessages.delete(msg.id), 10000);
+
+  if (msg.author.bot) return;
+  if (!msg.content.startsWith('^')) return;
 
   const args = msg.content.trim().split(/\s+/);
   const cmd  = args.shift().toLowerCase();
