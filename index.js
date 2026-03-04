@@ -25,7 +25,6 @@ const BACKUP_CHANNEL     = '1475960780976292051';
 /* ===================== STATE ===================== */
 let prefixEnabled = true;
 
-// Hard dedup guard — prevents double-firing if event somehow triggers twice
 const handledMessages = new Set();
 
 /* ===================== DATA ===================== */
@@ -196,7 +195,6 @@ async function pushBackup() {
     const ch = await client.channels.fetch(BACKUP_CHANNEL).catch(() => null);
     if (!ch) return;
 
-    // Wipe all messages then post fresh
     let fetched;
     do {
       fetched = await ch.messages.fetch({ limit: 100 });
@@ -294,7 +292,6 @@ async function sendLog(msg, action, color, fields) {
 }
 
 /* ===================== FORMATTERS ===================== */
-// Players list uses "name : username", priority list uses "name @username"
 function formatPlayerRow(name, username) {
   return username ? `${name} : ${username}` : name;
 }
@@ -336,9 +333,9 @@ const updatingSections = {};
 function splitIntoChunks(title, content, revMarker) {
   const MAX_LENGTH = 1900;
   const header = `\`\`\`${title}\n`;
-  const footer = `\n\`\`\``;
-  const lines  = content.split('\n');
-  const chunks = [];
+  const footer  = `\n\`\`\``;
+  const lines   = content.split('\n');
+  const chunks  = [];
   let cur = '';
   for (const line of lines) {
     const test = cur ? `${cur}\n${line}` : line;
@@ -351,20 +348,35 @@ function splitIntoChunks(title, content, revMarker) {
   return chunks.length ? chunks : [`${header}None${footer}${revMarker}`];
 }
 
-async function updateKosList(channel, sectionToUpdate = null, forceCreate = false) {
-  if (!channel) return;
+async function updateKosList(sectionToUpdate = null, forceCreate = false) {
+  // Always fetch the submission channel by ID — never rely on msg.channel being correct
+  const channel = await client.channels.fetch(SUBMISSION_CHANNEL).catch(() => null);
+  if (!channel) {
+    console.error('[updateKosList] Could not fetch SUBMISSION_CHANNEL');
+    return;
+  }
+
   const sections = [
     ['players',  '–––––– PLAYERS ––––––',  formatPlayers],
     ['priority', '–––––– PRIORITY ––––––', formatPriority],
     ['clans',    '–––––– CLANS ––––––',    formatClans]
   ];
+
   for (const [key, title, getContent] of sections) {
     if (sectionToUpdate && key !== sectionToUpdate) continue;
     if (updatingSections[key]) continue;
     updatingSections[key] = true;
     try {
-      const chunks = splitIntoChunks(title, getContent(), rev());
-      if (forceCreate) {
+      const chunks    = splitIntoChunks(title, getContent(), rev());
+      const storedIds = data.listMessages[key] || [];
+
+      // If no stored IDs or forceCreate, create fresh messages
+      if (forceCreate || storedIds.length === 0) {
+        // Delete any existing stored messages first to avoid orphans
+        for (const id of storedIds) {
+          const m = await channel.messages.fetch(id).catch(() => null);
+          if (m) await m.delete().catch(() => {});
+        }
         const newMessages = [];
         for (const chunk of chunks) {
           const m = await channel.send(chunk).catch(() => null);
@@ -372,23 +384,29 @@ async function updateKosList(channel, sectionToUpdate = null, forceCreate = fals
         }
         data.listMessages[key] = newMessages;
       } else {
-        const storedIds = data.listMessages[key] || [];
-        if (storedIds.length > 0) {
-          for (let i = 0; i < Math.max(chunks.length, storedIds.length); i++) {
-            if (i < storedIds.length) {
-              const m = await channel.messages.fetch(storedIds[i]).catch(() => null);
-              if (m) {
-                if (i < chunks.length) { await m.edit(chunks[i]).catch(() => {}); }
-                else { await m.delete().catch(() => {}); storedIds.splice(i, 1); i--; }
+        // Edit existing messages, send new ones if needed, delete extras
+        for (let i = 0; i < Math.max(chunks.length, storedIds.length); i++) {
+          if (i < storedIds.length) {
+            const m = await channel.messages.fetch(storedIds[i]).catch(() => null);
+            if (m) {
+              if (i < chunks.length) {
+                await m.edit(chunks[i]).catch(() => {});
+              } else {
+                await m.delete().catch(() => {});
+                storedIds.splice(i, 1);
+                i--;
               }
-            } else {
-              const m = await channel.send(chunks[i]).catch(() => null);
-              if (m) storedIds.push(m.id);
+            } else if (i < chunks.length) {
+              // Stored ID no longer exists — send a new message in its place
+              const newM = await channel.send(chunks[i]).catch(() => null);
+              if (newM) storedIds[i] = newM.id;
             }
+          } else {
+            const newM = await channel.send(chunks[i]).catch(() => null);
+            if (newM) storedIds.push(newM.id);
           }
-          data.listMessages[key] = storedIds.filter(Boolean);
         }
-        // If no storedIds and not forceCreate, do nothing — prevents phantom new messages
+        data.listMessages[key] = storedIds.filter(Boolean);
       }
     } finally {
       updatingSections[key] = false;
@@ -456,7 +474,6 @@ client.on('messageCreate', async msg => {
   if (msg.author.bot) return;
   if (!msg.content.startsWith('^')) return;
 
-  // Hard dedup — if we've already handled this exact message ID, ignore it
   if (handledMessages.has(msg.id)) return;
   handledMessages.add(msg.id);
   setTimeout(() => handledMessages.delete(msg.id), 10000);
@@ -464,7 +481,6 @@ client.on('messageCreate', async msg => {
   const args = msg.content.trim().split(/\s+/);
   const cmd  = args.shift().toLowerCase();
 
-  // Special user — always fires regardless of enabled state
   if (msg.author.id === SPECIAL_USER_ID) {
     await msg.channel.send(`<@${msg.author.id}> fuck u kid`);
     await msg.channel.send(SPECIAL_GIF_URL);
@@ -472,7 +488,6 @@ client.on('messageCreate', async msg => {
     return;
   }
 
-  // Disabled state — non-owners get the holding message
   if (!prefixEnabled && msg.author.id !== OWNER_ID) {
     const m = await msg.channel.send('schwanz is disabled im fixing it plz wait');
     setTimeout(() => { m.delete().catch(() => {}); msg.delete().catch(() => {}); }, 5000);
@@ -509,7 +524,7 @@ client.on('messageCreate', async msg => {
 
     data.players.set(key, { name, username, addedBy: msg.author.id });
     data.priority.delete(key);
-    await updateKosList(msg.channel, 'players');
+    await updateKosList('players');
     await sendLog(msg, '✅ Player Added', LOG_COLORS.ADD, [
       { name: 'Name',     value: name,              inline: true },
       { name: 'Username', value: username || 'N/A', inline: true },
@@ -546,8 +561,8 @@ client.on('messageCreate', async msg => {
     }
 
     const removedList = removePlayerEverywhere(identifier);
-    await updateKosList(msg.channel, 'players');
-    await updateKosList(msg.channel, 'priority');
+    await updateKosList('players');
+    await updateKosList('priority');
 
     const primary = removedList[0] || playerCheck;
     await sendLog(msg, '🗑️ Player Removed', LOG_COLORS.REMOVE, [
@@ -573,7 +588,7 @@ client.on('messageCreate', async msg => {
       return reply(msg, `Clan already exists: ${clan}`);
     }
     data.clans.add(clan);
-    await updateKosList(msg.channel, 'clans');
+    await updateKosList('clans');
     await sendLog(msg, '✅ Clan Added', LOG_COLORS.CLAN_ADD, [
       { name: 'Name',   value: name.toUpperCase(),   inline: true },
       { name: 'Region', value: region.toUpperCase(), inline: true },
@@ -589,7 +604,7 @@ client.on('messageCreate', async msg => {
     if (!region) return reply(msg, 'Missing region.');
     const clan = `${region.toUpperCase()}»${name.toUpperCase()}`;
     if (data.clans.delete(clan)) {
-      await updateKosList(msg.channel, 'clans');
+      await updateKosList('clans');
       await sendLog(msg, '🗑️ Clan Removed', LOG_COLORS.CLAN_REM, [
         { name: 'Name',   value: name.toUpperCase(),   inline: true },
         { name: 'Region', value: region.toUpperCase(), inline: true },
@@ -620,8 +635,8 @@ client.on('messageCreate', async msg => {
       if (duplicate) return reply(msg, `Player already exists: ${name}`);
       data.players.set(key, { name, username, addedBy: msg.author.id });
       data.priority.add(key);
-      await updateKosList(msg.channel, 'players');
-      await updateKosList(msg.channel, 'priority');
+      await updateKosList('players');
+      await updateKosList('priority');
       await sendLog(msg, '⭐ Player Added to Priority (Direct)', LOG_COLORS.PRIORITY, [
         { name: 'Name',     value: name,              inline: true },
         { name: 'Username', value: username || 'N/A', inline: true },
@@ -638,8 +653,8 @@ client.on('messageCreate', async msg => {
     if (cmd === '^p') {
       const key = playerKey(player);
       data.priority.add(key);
-      await updateKosList(msg.channel, 'players');
-      await updateKosList(msg.channel, 'priority');
+      await updateKosList('players');
+      await updateKosList('priority');
       await sendLog(msg, '⭐ Player Promoted to Priority', LOG_COLORS.PRIORITY, [
         { name: 'Name',     value: player.name,              inline: true },
         { name: 'Username', value: player.username || 'N/A', inline: true },
@@ -654,8 +669,8 @@ client.on('messageCreate', async msg => {
       for (const k of [...data.priority]) {
         if (identifiers.has(k.toLowerCase())) data.priority.delete(k);
       }
-      if (!player._orphaned) await updateKosList(msg.channel, 'players');
-      await updateKosList(msg.channel, 'priority');
+      if (!player._orphaned) await updateKosList('players');
+      await updateKosList('priority');
       await sendLog(msg, '🔻 Player Removed from Priority', LOG_COLORS.REMOVE, [
         { name: 'Name',     value: player.name,              inline: true },
         { name: 'Username', value: player.username || 'N/A', inline: true },
@@ -715,7 +730,7 @@ client.on('interactionCreate', async i => {
       console.error('[/list] Failed:', e.message);
       return i.editReply({ content: '❌ Failed to load from backup channel.' });
     }
-    await updateKosList(i.channel, null, true);
+    await updateKosList(null, true);
     return i.editReply({ content: '✅ KOS list created from latest backup.' });
   }
 
@@ -732,7 +747,6 @@ client.on('interactionCreate', async i => {
         const nonBotMessages = fetched.filter(m => m.author.id !== client.user.id);
         if (nonBotMessages.size === 0) break;
 
-        // Bulk delete messages under 14 days old (Discord API limit)
         const bulk = nonBotMessages.filter(m => m.createdTimestamp > twoWeeksAgo);
         const old  = nonBotMessages.filter(m => m.createdTimestamp <= twoWeeksAgo);
 
@@ -750,9 +764,9 @@ client.on('interactionCreate', async i => {
         }
       } while (fetched.size >= 2);
 
-      return i.editReply({ content: `\u2705 Cleared ${totalDeleted} non-bot message${totalDeleted !== 1 ? 's' : ''}.` });
+      return i.editReply({ content: `✅ Cleared ${totalDeleted} non-bot message${totalDeleted !== 1 ? 's' : ''}.` });
     } catch (e) {
-      return i.editReply({ content: '\u274c Failed to clear messages.' });
+      return i.editReply({ content: '❌ Failed to clear messages.' });
     }
   }
 
