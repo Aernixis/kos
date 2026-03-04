@@ -653,8 +653,15 @@ client.on('messageCreate', async msg => {
       return;
     }
 
-    const removeKey = playerCheck.username || playerCheck.name;
-    const removedList = removePlayerEverywhere(removeKey);
+    const removeKey = playerKey(playerCheck);
+    // Remove strictly by exact map key — never touches other players sharing the same display name
+    const removed = data.players.get(removeKey);
+    if (removed) data.players.delete(removeKey);
+    // Clean from priority by exact key only
+    for (const k of [...data.priority]) {
+      if (k.toLowerCase() === removeKey.toLowerCase()) data.priority.delete(k);
+    }
+    const removedList = removed ? [removed] : [];
     await updateKosList(['players', 'priority']);
 
     const primary = removedList[0] || playerCheck;
