@@ -25,35 +25,32 @@ const BACKUP_CHANNEL     = '1475960780976292051';
 const DEDUP_TTL_MS       = 30_000;
 
 /* ===================== DEDUP (file-backed) ===================== */
-// Written to disk so it survives process restarts and catches duplicate
-// gateway events that arrive in the same JS tick (immune to in-memory races).
+// Primary gate: in-memory Set — synchronous and zero-latency.
+// Node.js is single-threaded so Set.has() + Set.add() can never race;
+// the second gateway fire is rejected before any async work starts.
+// Secondary gate: file store catches duplicates across process restarts.
+const claimedMemory = new Set();
 let dedupStore = {};
 
 function loadDedup() {
   try { if (fs.existsSync(DEDUP_FILE)) dedupStore = JSON.parse(fs.readFileSync(DEDUP_FILE, 'utf8')); }
   catch { dedupStore = {}; }
-  pruneDedup();
-}
-
-function pruneDedup() {
   const now = Date.now();
-  let changed = false;
-  for (const id of Object.keys(dedupStore)) {
-    if (dedupStore[id] < now) { delete dedupStore[id]; changed = true; }
-  }
-  if (changed) flushDedup();
+  for (const id of Object.keys(dedupStore)) { if (dedupStore[id] < now) delete dedupStore[id]; }
 }
 
-function flushDedup() {
-  try { fs.writeFileSync(DEDUP_FILE, JSON.stringify(dedupStore)); } catch {}
-}
-
-// Returns true if the message ID is new and claims it. Returns false if already seen.
+// Atomically claims a message ID. Returns true if new, false if duplicate.
+// The in-memory check is the real lock — it executes synchronously with no
+// I/O gap, so two event-loop callbacks for the same message ID can never
+// both return true.
 function claimMessage(msgId) {
-  pruneDedup();
-  if (dedupStore[msgId]) return false;
+  if (claimedMemory.has(msgId)) return false;   // already claimed this session
+  claimedMemory.add(msgId);
+  setTimeout(() => claimedMemory.delete(msgId), DEDUP_TTL_MS);
+
+  if (dedupStore[msgId] && dedupStore[msgId] > Date.now()) return false; // seen in prior session
   dedupStore[msgId] = Date.now() + DEDUP_TTL_MS;
-  flushDedup();
+  try { fs.writeFileSync(DEDUP_FILE, JSON.stringify(dedupStore)); } catch {}
   return true;
 }
 
