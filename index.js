@@ -301,8 +301,9 @@ function formatPriorityRow(name, username) {
 }
 
 function formatPlayers() {
+  const priorityKeysLower = new Set([...data.priority].map(k => k.toLowerCase()));
   const rows = [...data.players.values()]
-    .filter(p => !data.priority.has(playerKey(p)))
+    .filter(p => !priorityKeysLower.has(playerKey(p).toLowerCase()))
     .sort((a, b) => alpha(a.name, b.name))
     .map(p => formatPlayerRow(p.name, p.username));
   return rows.length ? rows.join('\n') : 'None';
@@ -330,6 +331,48 @@ function formatClans() {
 /* ===================== LIST UPDATER ===================== */
 const updatingSections = {};
 
+// On startup: scan the submission channel and re-link any existing bot list messages
+// by matching their content headers. Recovers IDs after restarts or data loss.
+async function reconcileListMessages() {
+  const channel = await client.channels.fetch(SUBMISSION_CHANNEL).catch(() => null);
+  if (!channel) return;
+
+  const headers = {
+    players:  '\u2013\u2013\u2013\u2013\u2013\u2013 PLAYERS \u2013\u2013\u2013\u2013\u2013\u2013',
+    priority: '\u2013\u2013\u2013\u2013\u2013\u2013 PRIORITY \u2013\u2013\u2013\u2013\u2013\u2013',
+    clans:    '\u2013\u2013\u2013\u2013\u2013\u2013 CLANS \u2013\u2013\u2013\u2013\u2013\u2013'
+  };
+
+  const fetched = await channel.messages.fetch({ limit: 100 }).catch(() => null);
+  if (!fetched) return;
+
+  const botMessages = [...fetched.values()]
+    .filter(m => m.author.id === client.user.id && m.content.startsWith('```'))
+    .sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+
+  const found = { players: [], priority: [], clans: [] };
+  for (const m of botMessages) {
+    for (const [key, header] of Object.entries(headers)) {
+      if (m.content.includes(header)) { found[key].push(m.id); break; }
+    }
+  }
+
+  let changed = false;
+  for (const key of ['players', 'priority', 'clans']) {
+    if (found[key].length > 0) {
+      const stored = data.listMessages[key] || [];
+      const same = stored.length === found[key].length && stored.every((id, i) => id === found[key][i]);
+      if (!same) {
+        console.log(`[Reconcile] Re-linked ${key}: ${found[key]}`);
+        data.listMessages[key] = found[key];
+        changed = true;
+      }
+    }
+  }
+  if (changed) saveData();
+  console.log('[Reconcile] Done.');
+}
+
 function splitIntoChunks(title, content, revMarker) {
   const MAX_LENGTH = 1900;
   const header = `\`\`\`${title}\n`;
@@ -349,17 +392,13 @@ function splitIntoChunks(title, content, revMarker) {
 }
 
 async function updateKosList(sectionToUpdate = null, forceCreate = false) {
-  // Always fetch the submission channel by ID — never rely on msg.channel being correct
   const channel = await client.channels.fetch(SUBMISSION_CHANNEL).catch(() => null);
-  if (!channel) {
-    console.error('[updateKosList] Could not fetch SUBMISSION_CHANNEL');
-    return;
-  }
+  if (!channel) { console.error('[updateKosList] Could not fetch SUBMISSION_CHANNEL'); return; }
 
   const sections = [
-    ['players',  '–––––– PLAYERS ––––––',  formatPlayers],
-    ['priority', '–––––– PRIORITY ––––––', formatPriority],
-    ['clans',    '–––––– CLANS ––––––',    formatClans]
+    ['players',  '\u2013\u2013\u2013\u2013\u2013\u2013 PLAYERS \u2013\u2013\u2013\u2013\u2013\u2013',  formatPlayers],
+    ['priority', '\u2013\u2013\u2013\u2013\u2013\u2013 PRIORITY \u2013\u2013\u2013\u2013\u2013\u2013', formatPriority],
+    ['clans',    '\u2013\u2013\u2013\u2013\u2013\u2013 CLANS \u2013\u2013\u2013\u2013\u2013\u2013',    formatClans]
   ];
 
   for (const [key, title, getContent] of sections) {
@@ -368,45 +407,62 @@ async function updateKosList(sectionToUpdate = null, forceCreate = false) {
     updatingSections[key] = true;
     try {
       const chunks    = splitIntoChunks(title, getContent(), rev());
-      const storedIds = data.listMessages[key] || [];
+      const storedIds = [...(data.listMessages[key] || [])];
 
-      // If no stored IDs or forceCreate, create fresh messages
-      if (forceCreate || storedIds.length === 0) {
-        // Delete any existing stored messages first to avoid orphans
+      if (forceCreate) {
+        // /list only: delete old messages and post fresh ones
         for (const id of storedIds) {
           const m = await channel.messages.fetch(id).catch(() => null);
           if (m) await m.delete().catch(() => {});
         }
-        const newMessages = [];
+        const newIds = [];
         for (const chunk of chunks) {
           const m = await channel.send(chunk).catch(() => null);
-          if (m) newMessages.push(m.id);
+          if (m) newIds.push(m.id);
         }
-        data.listMessages[key] = newMessages;
+        data.listMessages[key] = newIds;
+
       } else {
-        // Edit existing messages, send new ones if needed, delete extras
-        for (let i = 0; i < Math.max(chunks.length, storedIds.length); i++) {
-          if (i < storedIds.length) {
-            const m = await channel.messages.fetch(storedIds[i]).catch(() => null);
-            if (m) {
-              if (i < chunks.length) {
-                await m.edit(chunks[i]).catch(() => {});
-              } else {
-                await m.delete().catch(() => {});
-                storedIds.splice(i, 1);
-                i--;
-              }
-            } else if (i < chunks.length) {
-              // Stored ID no longer exists — send a new message in its place
-              const newM = await channel.send(chunks[i]).catch(() => null);
-              if (newM) storedIds[i] = newM.id;
-            }
-          } else {
-            const newM = await channel.send(chunks[i]).catch(() => null);
-            if (newM) storedIds.push(newM.id);
-          }
+        // Normal update: ONLY edit. Never send new messages.
+        if (storedIds.length === 0) {
+          console.warn(`[updateKosList] No stored IDs for "${key}" — run /list to create the list.`);
+          continue;
         }
-        data.listMessages[key] = storedIds.filter(Boolean);
+
+        // Verify all stored IDs still exist
+        const verifiedIds = [];
+        for (const id of storedIds) {
+          const m = await channel.messages.fetch(id).catch(() => null);
+          if (m) verifiedIds.push(id);
+        }
+
+        if (verifiedIds.length === 0) {
+          console.warn(`[updateKosList] All "${key}" messages are gone — run /list to recreate.`);
+          data.listMessages[key] = [];
+          continue;
+        }
+
+        // Fit all chunks into the available slots by merging overflow into the last slot
+        let slottedChunks;
+        if (chunks.length <= verifiedIds.length) {
+          slottedChunks = chunks;
+        } else {
+          slottedChunks = chunks.slice(0, verifiedIds.length - 1);
+          const overflow = chunks.slice(verifiedIds.length - 1)
+            .map(c => c.replace(/^```[^\n]*\n/, '').replace(/\n```[\u200B]*$/, ''))
+            .join('\n');
+          const revMarker = '\u200B'.repeat((data.revision % 10) + 1);
+          slottedChunks.push(`\`\`\`${title}\n${overflow}\n\`\`\`${revMarker}`);
+        }
+
+        for (let i = 0; i < verifiedIds.length; i++) {
+          const m = await channel.messages.fetch(verifiedIds[i]).catch(() => null);
+          if (!m) continue;
+          const newContent = i < slottedChunks.length ? slottedChunks[i] : '\u200B';
+          await m.edit(newContent).catch(() => {});
+        }
+
+        data.listMessages[key] = verifiedIds;
       }
     } finally {
       updatingSections[key] = false;
@@ -840,6 +896,7 @@ require('http').createServer((req, res) => res.end('Bot running')).listen(PORT);
 client.once('ready', async () => {
   console.log(`[Bot] Logged in as ${client.user.tag}`);
   await loadData();
+  await reconcileListMessages();
   schedule24hBackup();
   console.log('[Bot] Ready. 24h auto-backup scheduled.');
 });
