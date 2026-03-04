@@ -598,9 +598,8 @@ client.on('messageCreate', async msg => {
     if (!identifier) return reply(msg, 'Missing name.');
     const usernameArg = cleanUsername(rawUsername) || null;
 
-    // If a username was provided, match strictly by username
-    // Otherwise match by name — but block if multiple players share that display name
-    let playerCheck;
+    let playerCheck = null;
+
     if (usernameArg) {
       playerCheck = [...data.players.values()].find(
         p => p.username && p.username.toLowerCase() === usernameArg.toLowerCase()
@@ -610,32 +609,35 @@ client.on('messageCreate', async msg => {
           { name: 'Identifier', value: `${identifier} (${usernameArg})`, inline: true },
           { name: 'Result',     value: 'Player not found by username', inline: false }
         ]);
-        return reply(msg, `Player not found with username: ${usernameArg}`);
+        await reply(msg, `Player not found with username: ${usernameArg}`);
+        return;
       }
     } else {
       const byName = [...data.players.values()].filter(
         p => p.name.toLowerCase() === identifier.toLowerCase()
       );
       if (byName.length === 0) {
-        // Also check priority orphans
         playerCheck = findPlayer(identifier);
         if (!playerCheck) {
           await sendLog(msg, '⚠️ Remove Player — Not Found', LOG_COLORS.ERROR, [
             { name: 'Identifier', value: identifier, inline: true },
             { name: 'Result',     value: 'Player not found', inline: false }
           ]);
-          return reply(msg, 'Player not found.');
+          await reply(msg, 'Player not found.');
+          return;
         }
       } else if (byName.length > 1) {
-        // Multiple players share this display name — require a username
-        return reply(msg,
+        await reply(msg,
           `${byName.length} players found with display name **${identifier}**. Please specify a username: \`^kr ${identifier} <username>\``,
           6000
         );
+        return;
       } else {
         playerCheck = byName[0];
       }
     }
+
+    if (!playerCheck) return;
 
     if (
       !playerCheck._orphaned &&
@@ -647,10 +649,10 @@ client.on('messageCreate', async msg => {
         { name: 'Target', value: playerCheck.username || playerCheck.name, inline: true },
         { name: 'Result', value: 'User did not add this player', inline: false }
       ]);
-      return reply(msg, "You didn't add this player.");
+      await reply(msg, "You didn't add this player.");
+      return;
     }
 
-    // Remove by exact key (username if present, else name)
     const removeKey = playerCheck.username || playerCheck.name;
     const removedList = removePlayerEverywhere(removeKey);
     await updateKosList(['players', 'priority']);
@@ -661,7 +663,8 @@ client.on('messageCreate', async msg => {
       { name: 'Username', value: primary.username || 'N/A', inline: true },
       { name: 'Result',   value: `Fully removed (${removedList.length} entr${removedList.length === 1 ? 'y' : 'ies'} cleared)`, inline: false }
     ]);
-    return reply(msg, `Removed ${primary.name}${primary.username ? ` (${primary.username})` : ''}`);
+    await reply(msg, `Removed ${primary.name}${primary.username ? ` (${primary.username})` : ''}`);
+    return;
   }
 
   // ---------- ^kca ----------
