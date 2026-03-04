@@ -1,5 +1,6 @@
 require('dotenv').config();
-const fs = require('fs');
+const fs   = require('fs');
+const fsp  = require('fs/promises');
 const { Client, GatewayIntentBits, Partials, EmbedBuilder, AttachmentBuilder } = require('discord.js');
 
 /* ===================== CLIENT ===================== */
@@ -24,13 +25,43 @@ const LOGS_CHANNEL       = '1473800222927880223';
 const BACKUP_CHANNEL     = '1475960780976292051';
 const DEDUP_TTL_MS       = 30_000;
 
+// Whitelist valid commands — fast-rejects unknown prefixed messages before queuing
+const VALID_COMMANDS = new Set(['^ka', '^kr', '^kca', '^kcr', '^p', '^pr', '^pa']);
+
+/* ===================== INPUT SANITIZATION ===================== */
+/**
+ * Strip control characters and limit length to prevent injection / oversized inputs.
+ * Max 64 chars covers any realistic game name or username.
+ */
+function sanitizeInput(str, maxLen = 64) {
+  if (typeof str !== 'string') return null;
+  // eslint-disable-next-line no-control-regex
+  const cleaned = str.replace(/[\x00-\x1F\x7F\u200B-\u200D\uFEFF]/g, '').trim();
+  if (cleaned.length === 0 || cleaned.length > maxLen) return null;
+  return cleaned;
+}
+
 /* ===================== DEDUP (file-backed) ===================== */
 const claimedMemory = new Set();
 let dedupStore = {};
+let dedupDirty = false;
+
+// Debounced async flush — never blocks the event loop on every message
+let _dedupFlushTimer = null;
+function scheduleDedupFlush() {
+  if (_dedupFlushTimer) return;
+  _dedupFlushTimer = setTimeout(async () => {
+    _dedupFlushTimer = null;
+    if (!dedupDirty) return;
+    dedupDirty = false;
+    try { await fsp.writeFile(DEDUP_FILE, JSON.stringify(dedupStore)); } catch {}
+  }, 500);
+}
 
 function loadDedup() {
-  try { if (fs.existsSync(DEDUP_FILE)) dedupStore = JSON.parse(fs.readFileSync(DEDUP_FILE, 'utf8')); }
-  catch { dedupStore = {}; }
+  try {
+    if (fs.existsSync(DEDUP_FILE)) dedupStore = JSON.parse(fs.readFileSync(DEDUP_FILE, 'utf8'));
+  } catch { dedupStore = {}; }
   const now = Date.now();
   for (const id of Object.keys(dedupStore)) { if (dedupStore[id] < now) delete dedupStore[id]; }
 }
@@ -40,9 +71,11 @@ function claimMessage(msgId) {
   claimedMemory.add(msgId);
   setTimeout(() => claimedMemory.delete(msgId), DEDUP_TTL_MS);
 
-  if (dedupStore[msgId] && dedupStore[msgId] > Date.now()) return false;
-  dedupStore[msgId] = Date.now() + DEDUP_TTL_MS;
-  try { fs.writeFileSync(DEDUP_FILE, JSON.stringify(dedupStore)); } catch {}
+  const now = Date.now();
+  if (dedupStore[msgId] && dedupStore[msgId] > now) return false;
+  dedupStore[msgId] = now + DEDUP_TTL_MS;
+  dedupDirty = true;
+  scheduleDedupFlush();
   return true;
 }
 
@@ -59,7 +92,7 @@ async function drainQueue() {
   if (cmdRunning || cmdQueue.length === 0) return;
   cmdRunning = true;
   while (cmdQueue.length > 0) {
-    try { await cmdQueue.shift()(); } catch (e) { console.error('[Queue]', e); }
+    try { await cmdQueue.shift()(); } catch (e) { console.error('[Queue]', e.message); }
   }
   cmdRunning = false;
 }
@@ -68,8 +101,15 @@ async function drainQueue() {
 let prefixEnabled = true;
 
 /* ===================== DATA ===================== */
+/**
+ * O(1) indexes for player lookups — maintained alongside data.players.
+ *   nameIndex:     lowercase display name → player object
+ *   usernameIndex: lowercase username     → player object
+ */
 let data = {
   players:         new Map(),
+  nameIndex:       new Map(),
+  usernameIndex:   new Map(),
   priority:        new Set(),
   clans:           new Set(),
   bannedUsers:     new Set(),
@@ -79,6 +119,26 @@ let data = {
   ownerRoleId:     null,
   revision:        0
 };
+
+/* ===================== INDEX HELPERS ===================== */
+function rebuildIndexes() {
+  data.nameIndex.clear();
+  data.usernameIndex.clear();
+  for (const p of data.players.values()) {
+    data.nameIndex.set(p.name.toLowerCase(), p);
+    if (p.username) data.usernameIndex.set(p.username.toLowerCase(), p);
+  }
+}
+
+function indexAdd(player) {
+  data.nameIndex.set(player.name.toLowerCase(), player);
+  if (player.username) data.usernameIndex.set(player.username.toLowerCase(), player);
+}
+
+function indexRemove(player) {
+  data.nameIndex.delete(player.name.toLowerCase());
+  if (player.username) data.usernameIndex.delete(player.username.toLowerCase());
+}
 
 /* ===================== HELPERS ===================== */
 function canUsePriority(msg) {
@@ -92,16 +152,8 @@ function isOwner(i) {
   return false;
 }
 
-// FIX 1: rev() now takes the current revision as a parameter so it never
-// mutates shared state mid-flight and always produces the same marker for
-// the same revision value. Call bumpRev() once before a full update cycle.
-function bumpRev() {
-  data.revision++;
-}
-
-function revMarker() {
-  return '\u200B'.repeat((data.revision % 10) + 1);
-}
+function bumpRev() { data.revision++; }
+function revMarker() { return '\u200B'.repeat((data.revision % 10) + 1); }
 
 async function reply(msg, text, ms = 3000) {
   const m = await msg.channel.send(`<@${msg.author.id}> ${text}`);
@@ -121,25 +173,34 @@ const alpha = (a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' });
 
 function sortData() {
   const sorted = [...data.players.values()].sort((a, b) => alpha(a.name, b.name));
-  data.players  = new Map(sorted.map(p => [playerKey(p), p]));
+  data.players = new Map(sorted.map(p => [playerKey(p), p]));
   const sortedP = [...data.priority].sort((a, b) => {
-    const pa = [...data.players.values()].find(p => playerKey(p).toLowerCase() === a.toLowerCase());
-    const pb = [...data.players.values()].find(p => playerKey(p).toLowerCase() === b.toLowerCase());
+    const pa = data.nameIndex.get(a.toLowerCase()) || data.usernameIndex.get(a.toLowerCase());
+    const pb = data.nameIndex.get(b.toLowerCase()) || data.usernameIndex.get(b.toLowerCase());
     return alpha(pa ? pa.name : a, pb ? pb.name : b);
   });
   data.priority = new Set(sortedP);
   data.clans    = new Set([...data.clans].sort(alpha));
 }
 
+/** O(1) player lookup via indexes */
 function findPlayer(identifier) {
-  const id     = identifier.toLowerCase();
-  const byName = [...data.players.values()].find(p => p.name.toLowerCase() === id);
+  const id = identifier.toLowerCase();
+  const byName = data.nameIndex.get(id);
   if (byName) return byName;
-  const byUser = [...data.players.values()].find(p => p.username && p.username.toLowerCase() === id);
+  const byUser = data.usernameIndex.get(id);
   if (byUser) return byUser;
   const orphan = [...data.priority].find(k => k.toLowerCase() === id);
   if (orphan) return { name: orphan, username: null, addedBy: null, _orphaned: true };
   return null;
+}
+
+/** Returns all players sharing a display name (handles duplicates) */
+function findPlayersByName(nameLower) {
+  const exact = data.nameIndex.get(nameLower);
+  if (!exact) return [];
+  // Check for duplicates (same display name, different username)
+  return [...data.players.values()].filter(p => p.name.toLowerCase() === nameLower);
 }
 
 /* ===================== BUILD / PARSE ===================== */
@@ -161,8 +222,9 @@ function buildPayload() {
 function parseRaw(raw) {
   data.players = new Map();
   (raw.players || []).forEach(p => {
-    const uname = cleanUsername(p.username);
-    data.players.set(uname || p.name, { name: p.name, username: uname, addedBy: p.addedBy });
+    const uname  = cleanUsername(p.username);
+    const player = { name: p.name, username: uname, addedBy: p.addedBy };
+    data.players.set(uname || p.name, player);
   });
   data.priority = new Set();
   (raw.topPriority || []).forEach(u => u && data.priority.add(u));
@@ -180,12 +242,13 @@ function parseRaw(raw) {
   data.panelMessages = raw.panelMessages || data.panelMessages;
   data.revision      = raw.revision      || 0;
   sortData();
+  rebuildIndexes();
 }
 
 /* ===================== SAVE / LOAD ===================== */
 async function pushBackup() {
   const payload = buildPayload();
-  try { fs.writeFileSync(DATA_FILE, payload); } catch (e) { console.error('[Backup] Local write failed:', e.message); }
+  try { await fsp.writeFile(DATA_FILE, payload); } catch (e) { console.error('[Backup] Local write failed:', e.message); }
   try {
     const ch = await client.channels.fetch(BACKUP_CHANNEL).catch(() => null);
     if (!ch) return;
@@ -200,7 +263,7 @@ async function pushBackup() {
       files:   [new AttachmentBuilder(Buffer.from(payload, 'utf8'), { name: 'data.json' })]
     });
     data.backupMessageId = sent.id;
-    fs.writeFileSync(DATA_FILE, buildPayload());
+    await fsp.writeFile(DATA_FILE, buildPayload());
     console.log(`[Backup] Pushed (msg ${sent.id})`);
   } catch (e) { console.error('[Backup] Discord push failed:', e.message); }
 }
@@ -212,7 +275,9 @@ function schedule24hBackup() {
 let _pendingChanges = 0;
 function saveData() {
   _pendingChanges++;
-  if (_pendingChanges >= 10) { _pendingChanges = 0; pushBackup(); }
+  if (_pendingChanges >= 10) { _pendingChanges = 0; pushBackup(); return; }
+  // Async write — never blocks the event loop
+  fsp.writeFile(DATA_FILE, buildPayload()).catch(e => console.error('[Save]', e.message));
 }
 
 async function loadData() {
@@ -227,7 +292,7 @@ async function loadData() {
     const raw = await (await fetch(msg.attachments.find(a => a.name === 'data.json').url)).json();
     parseRaw(raw);
     data.backupMessageId = msg.id;
-    fs.writeFileSync(DATA_FILE, buildPayload());
+    await fsp.writeFile(DATA_FILE, buildPayload());
     console.log(`[Load] Loaded from Discord (msg ${msg.id})`);
   } catch (e) { console.error('[Load] Discord load failed:', e.message); }
 }
@@ -266,7 +331,7 @@ function formatPlayers() {
 
 function formatPriority() {
   const rows = [...data.priority].map(u => {
-    const p = data.players.get(u) || [...data.players.values()].find(pl => playerKey(pl).toLowerCase() === u.toLowerCase());
+    const p = data.players.get(u) || data.nameIndex.get(u.toLowerCase()) || data.usernameIndex.get(u.toLowerCase());
     return { sort: p ? p.name : u, text: p ? (p.username ? `${p.name} @${p.username}` : p.name) : u };
   }).sort((a, b) => alpha(a.sort, b.sort)).map(r => r.text);
   return rows.length ? rows.join('\n') : 'None';
@@ -277,8 +342,6 @@ function formatClans() {
 }
 
 /* ===================== LIST UPDATER ===================== */
-// FIX 2: Per-section locks are now stored as Promises so they properly
-// chain — a boolean flag can't await the previous run finishing.
 const sectionLocks = {};
 
 function acquireSectionLock(key) {
@@ -331,9 +394,6 @@ async function reconcileListMessages() {
   console.log('[Reconcile] Done.');
 }
 
-// FIX 3: splitIntoChunks now accepts the revMarker string as a plain value
-// so it never calls rev() itself — the caller stamps the marker once and
-// passes the same string into every call, keeping all chunks consistent.
 function splitIntoChunks(title, content, marker) {
   const MAX = 1900;
   const hdr = `\`\`\`${title}\n`;
@@ -359,17 +419,11 @@ async function updateKosList(sectionsArg = null, forceCreate = false) {
     ? (Array.isArray(sectionsArg) ? sectionsArg : [sectionsArg])
     : ['players', 'priority', 'clans'];
 
-  // FIX 4: Bump revision exactly once per logical update, then capture the
-  // marker string. Every section in this update shares the same revision so
-  // they stay in sync even when run in parallel.
   bumpRev();
   const marker = revMarker();
 
   await Promise.all(keys.map(async key => {
     if (!SECTION_FORMAT[key]) return;
-
-    // Acquire the per-section mutex so concurrent calls queue rather than
-    // clobber each other. The lock is a Promise chain — never a boolean flag.
     const release = await acquireSectionLock(key);
     try {
       const chunks    = splitIntoChunks(SECTION_HEADER[key], SECTION_FORMAT[key](), marker);
@@ -404,8 +458,6 @@ async function updateKosList(sectionsArg = null, forceCreate = false) {
         return;
       }
 
-      // Fit chunks into verified slots; merge any overflow into the last slot.
-      // Use the same marker string — never re-call rev() here.
       let slotted;
       if (chunks.length <= verified.length) {
         slotted = chunks;
@@ -420,7 +472,6 @@ async function updateKosList(sectionsArg = null, forceCreate = false) {
         const m = await channel.messages.fetch(id).catch(() => null);
         if (!m) { console.warn(`[updateKosList] Slot ${i} for "${key}" vanished during edit`); return; }
         const newContent = i < slotted.length ? slotted[i] : '\u200B';
-        // Only edit if content actually changed — avoids Discord no-op drops
         if (m.content !== newContent) {
           await m.edit(newContent).catch(e => console.error(`[updateKosList] edit failed for "${key}" slot ${i}:`, e.message));
         }
@@ -488,6 +539,9 @@ client.on('messageCreate', msg => {
   if (!claimMessage(msg.id)) return;
   if (msg.author.bot) return;
   if (!msg.content.startsWith('^')) return;
+  // Fast-reject: only queue known commands
+  const cmd = msg.content.trim().split(/\s+/)[0].toLowerCase();
+  if (!VALID_COMMANDS.has(cmd)) return;
   enqueueCommand(() => handleCommand(msg));
 });
 
@@ -520,55 +574,69 @@ async function handleCommand(msg) {
 
   // ---------- ^ka ----------
   if (cmd === '^ka') {
-    const [name, rawUsername] = args;
-    if (!name) { await reply(msg, 'Missing name.'); return; }
-    const username = cleanUsername(rawUsername) || null;
-    const key      = username || name;
+    const name     = sanitizeInput(args[0]);
+    const username = sanitizeInput(args[1]) || null;
+    if (!name) { await reply(msg, 'Missing or invalid name.'); return; }
+    const key = username || name;
     if (data.players.has(key)) {
-      await sendLog(msg, '⚠️ Add Player — Already Exists', LOG_COLORS.ERROR, [
+      await Promise.all([
+        sendLog(msg, '⚠️ Add Player — Already Exists', LOG_COLORS.ERROR, [
+          { name: 'Name', value: name, inline: true },
+          { name: 'Username', value: username || 'N/A', inline: true },
+          { name: 'Result', value: 'Already on KOS list', inline: false }
+        ]),
+        reply(msg, `Player already in KOS: ${key}`)
+      ]);
+      return;
+    }
+    const player = { name, username, addedBy: msg.author.id };
+    data.players.set(key, player);
+    indexAdd(player);
+    data.priority.delete(key);
+    await Promise.all([
+      updateKosList(['players', 'priority']),
+      sendLog(msg, '✅ Player Added', LOG_COLORS.ADD, [
         { name: 'Name', value: name, inline: true },
         { name: 'Username', value: username || 'N/A', inline: true },
-        { name: 'Result', value: 'Already on KOS list', inline: false }
-      ]);
-      await reply(msg, `Player already in KOS: ${key}`); return;
-    }
-    data.players.set(key, { name, username, addedBy: msg.author.id });
-    data.priority.delete(key);
-    await updateKosList(['players', 'priority']);
-    await sendLog(msg, '✅ Player Added', LOG_COLORS.ADD, [
-      { name: 'Name', value: name, inline: true },
-      { name: 'Username', value: username || 'N/A', inline: true },
-      { name: 'Result', value: 'Added to KOS list', inline: false }
+        { name: 'Result', value: 'Added to KOS list', inline: false }
+      ]),
+      reply(msg, `Added ${name}${username ? ` (${username})` : ''}`)
     ]);
-    await reply(msg, `Added ${name}${username ? ` (${username})` : ''}`); return;
+    return;
   }
 
   // ---------- ^kr ----------
   if (cmd === '^kr') {
-    const [identifier, rawUsername] = args;
+    const identifier  = sanitizeInput(args[0]);
+    const usernameArg = sanitizeInput(args[1]) || null;
     if (!identifier) { await reply(msg, 'Missing name.'); return; }
-    const usernameArg = cleanUsername(rawUsername) || null;
     let playerCheck = null;
 
     if (usernameArg) {
-      playerCheck = [...data.players.values()].find(p => p.username && p.username.toLowerCase() === usernameArg.toLowerCase());
+      playerCheck = data.usernameIndex.get(usernameArg.toLowerCase()) || null;
       if (!playerCheck) {
-        await sendLog(msg, '⚠️ Remove Player — Not Found', LOG_COLORS.ERROR, [
-          { name: 'Identifier', value: `${identifier} (${usernameArg})`, inline: true },
-          { name: 'Result', value: 'Player not found by username', inline: false }
+        await Promise.all([
+          sendLog(msg, '⚠️ Remove Player — Not Found', LOG_COLORS.ERROR, [
+            { name: 'Identifier', value: `${identifier} (${usernameArg})`, inline: true },
+            { name: 'Result', value: 'Player not found by username', inline: false }
+          ]),
+          reply(msg, `Player not found with username: ${usernameArg}`)
         ]);
-        await reply(msg, `Player not found with username: ${usernameArg}`); return;
+        return;
       }
     } else {
-      const byName = [...data.players.values()].filter(p => p.name.toLowerCase() === identifier.toLowerCase());
+      const byName = findPlayersByName(identifier.toLowerCase());
       if (byName.length === 0) {
         playerCheck = findPlayer(identifier);
         if (!playerCheck) {
-          await sendLog(msg, '⚠️ Remove Player — Not Found', LOG_COLORS.ERROR, [
-            { name: 'Identifier', value: identifier, inline: true },
-            { name: 'Result', value: 'Player not found', inline: false }
+          await Promise.all([
+            sendLog(msg, '⚠️ Remove Player — Not Found', LOG_COLORS.ERROR, [
+              { name: 'Identifier', value: identifier, inline: true },
+              { name: 'Result', value: 'Player not found', inline: false }
+            ]),
+            reply(msg, 'Player not found.')
           ]);
-          await reply(msg, 'Player not found.'); return;
+          return;
         }
       } else if (byName.length > 1) {
         await reply(msg,
@@ -583,73 +651,91 @@ async function handleCommand(msg) {
     if (!playerCheck) return;
 
     if (!playerCheck._orphaned && playerCheck.addedBy !== msg.author.id && msg.author.id !== OWNER_ID && !canUsePriority(msg)) {
-      await sendLog(msg, '⛔ Remove Player — Permission Denied', LOG_COLORS.ERROR, [
-        { name: 'Target', value: playerCheck.username || playerCheck.name, inline: true },
-        { name: 'Result', value: 'User did not add this player', inline: false }
+      await Promise.all([
+        sendLog(msg, '⛔ Remove Player — Permission Denied', LOG_COLORS.ERROR, [
+          { name: 'Target', value: playerCheck.username || playerCheck.name, inline: true },
+          { name: 'Result', value: 'User did not add this player', inline: false }
+        ]),
+        reply(msg, "You didn't add this player.")
       ]);
-      await reply(msg, "You didn't add this player."); return;
+      return;
     }
 
     const removeKey = playerKey(playerCheck);
     const removed   = data.players.get(removeKey);
-    if (removed) data.players.delete(removeKey);
+    if (removed) { data.players.delete(removeKey); indexRemove(removed); }
     for (const k of [...data.priority]) { if (k.toLowerCase() === removeKey.toLowerCase()) data.priority.delete(k); }
 
-    await updateKosList(['players', 'priority']);
     const primary = removed || playerCheck;
-    await sendLog(msg, '🗑️ Player Removed', LOG_COLORS.REMOVE, [
-      { name: 'Name', value: primary.name, inline: true },
-      { name: 'Username', value: primary.username || 'N/A', inline: true },
-      { name: 'Result', value: 'Removed from KOS list', inline: false }
+    await Promise.all([
+      updateKosList(['players', 'priority']),
+      sendLog(msg, '🗑️ Player Removed', LOG_COLORS.REMOVE, [
+        { name: 'Name', value: primary.name, inline: true },
+        { name: 'Username', value: primary.username || 'N/A', inline: true },
+        { name: 'Result', value: 'Removed from KOS list', inline: false }
+      ]),
+      reply(msg, `Removed ${primary.name}${primary.username ? ` (${primary.username})` : ''}`)
     ]);
-    await reply(msg, `Removed ${primary.name}${primary.username ? ` (${primary.username})` : ''}`); return;
+    return;
   }
 
   // ---------- ^kca ----------
   if (cmd === '^kca') {
-    const [name, region] = args;
-    if (!name)   { await reply(msg, 'Missing name and region.'); return; }
-    if (!region) { await reply(msg, 'Missing region.'); return; }
-    const clan = `${region.toUpperCase()}»${name.toUpperCase()}`;
+    const clanName   = sanitizeInput(args[0]);
+    const clanRegion = sanitizeInput(args[1]);
+    if (!clanName)   { await reply(msg, 'Missing name and region.'); return; }
+    if (!clanRegion) { await reply(msg, 'Missing region.'); return; }
+    const clan = `${clanRegion.toUpperCase()}»${clanName.toUpperCase()}`;
     if (data.clans.has(clan)) {
-      await sendLog(msg, '⚠️ Add Clan — Already Exists', LOG_COLORS.ERROR, [
-        { name: 'Name', value: name.toUpperCase(), inline: true },
-        { name: 'Region', value: region.toUpperCase(), inline: true },
-        { name: 'Result', value: 'Already on KOS list', inline: false }
+      await Promise.all([
+        sendLog(msg, '⚠️ Add Clan — Already Exists', LOG_COLORS.ERROR, [
+          { name: 'Name', value: clanName.toUpperCase(), inline: true },
+          { name: 'Region', value: clanRegion.toUpperCase(), inline: true },
+          { name: 'Result', value: 'Already on KOS list', inline: false }
+        ]),
+        reply(msg, `Clan already exists: ${clan}`)
       ]);
-      await reply(msg, `Clan already exists: ${clan}`); return;
+      return;
     }
     data.clans.add(clan);
-    await updateKosList(['clans']);
-    await sendLog(msg, '✅ Clan Added', LOG_COLORS.CLAN_ADD, [
-      { name: 'Name', value: name.toUpperCase(), inline: true },
-      { name: 'Region', value: region.toUpperCase(), inline: true },
-      { name: 'Result', value: 'Clan added to KOS list', inline: false }
+    await Promise.all([
+      updateKosList(['clans']),
+      sendLog(msg, '✅ Clan Added', LOG_COLORS.CLAN_ADD, [
+        { name: 'Name', value: clanName.toUpperCase(), inline: true },
+        { name: 'Region', value: clanRegion.toUpperCase(), inline: true },
+        { name: 'Result', value: 'Clan added to KOS list', inline: false }
+      ]),
+      reply(msg, `Added clan ${clan}`)
     ]);
-    await reply(msg, `Added clan ${clan}`); return;
+    return;
   }
 
   // ---------- ^kcr ----------
   if (cmd === '^kcr') {
-    const [name, region] = args;
-    if (!name)   { await reply(msg, 'Missing name and region.'); return; }
-    if (!region) { await reply(msg, 'Missing region.'); return; }
-    const clan = `${region.toUpperCase()}»${name.toUpperCase()}`;
+    const clanName   = sanitizeInput(args[0]);
+    const clanRegion = sanitizeInput(args[1]);
+    if (!clanName)   { await reply(msg, 'Missing name and region.'); return; }
+    if (!clanRegion) { await reply(msg, 'Missing region.'); return; }
+    const clan = `${clanRegion.toUpperCase()}»${clanName.toUpperCase()}`;
     if (data.clans.delete(clan)) {
-      await updateKosList(['clans']);
-      await sendLog(msg, '🗑️ Clan Removed', LOG_COLORS.CLAN_REM, [
-        { name: 'Name', value: name.toUpperCase(), inline: true },
-        { name: 'Region', value: region.toUpperCase(), inline: true },
-        { name: 'Result', value: 'Clan removed from KOS list', inline: false }
+      await Promise.all([
+        updateKosList(['clans']),
+        sendLog(msg, '🗑️ Clan Removed', LOG_COLORS.CLAN_REM, [
+          { name: 'Name', value: clanName.toUpperCase(), inline: true },
+          { name: 'Region', value: clanRegion.toUpperCase(), inline: true },
+          { name: 'Result', value: 'Clan removed from KOS list', inline: false }
+        ]),
+        reply(msg, `Removed clan ${clan}`)
       ]);
-      await reply(msg, `Removed clan ${clan}`);
     } else {
-      await sendLog(msg, '⚠️ Remove Clan — Not Found', LOG_COLORS.ERROR, [
-        { name: 'Name', value: name.toUpperCase(), inline: true },
-        { name: 'Region', value: region.toUpperCase(), inline: true },
-        { name: 'Result', value: 'Clan not found', inline: false }
+      await Promise.all([
+        sendLog(msg, '⚠️ Remove Clan — Not Found', LOG_COLORS.ERROR, [
+          { name: 'Name', value: clanName.toUpperCase(), inline: true },
+          { name: 'Region', value: clanRegion.toUpperCase(), inline: true },
+          { name: 'Result', value: 'Clan not found', inline: false }
+        ]),
+        reply(msg, `Clan not found: ${clan}`)
       ]);
-      await reply(msg, `Clan not found: ${clan}`);
     }
     return;
   }
@@ -659,49 +745,60 @@ async function handleCommand(msg) {
     if (!canUsePriority(msg)) { await reply(msg, 'You cannot use priority commands.'); return; }
 
     if (cmd === '^pa') {
-      const [name, rawUsername] = args;
+      const name     = sanitizeInput(args[0]);
+      const username = sanitizeInput(args[1]) || null;
       if (!name) { await reply(msg, 'Missing name.'); return; }
-      const username = cleanUsername(rawUsername) || null;
-      const key      = username || name;
+      const key = username || name;
       if (data.players.has(key)) { await reply(msg, `Player already exists: ${key}`); return; }
-      data.players.set(key, { name, username, addedBy: msg.author.id });
+      const player = { name, username, addedBy: msg.author.id };
+      data.players.set(key, player);
+      indexAdd(player);
       data.priority.add(key);
-      await updateKosList(['players', 'priority']);
-      await sendLog(msg, '⭐ Player Added to Priority (Direct)', LOG_COLORS.PRIORITY, [
-        { name: 'Name', value: name, inline: true },
-        { name: 'Username', value: username || 'N/A', inline: true },
-        { name: 'Result', value: 'Added directly to Priority', inline: false }
+      await Promise.all([
+        updateKosList(['players', 'priority']),
+        sendLog(msg, '⭐ Player Added to Priority (Direct)', LOG_COLORS.PRIORITY, [
+          { name: 'Name', value: name, inline: true },
+          { name: 'Username', value: username || 'N/A', inline: true },
+          { name: 'Result', value: 'Added directly to Priority', inline: false }
+        ]),
+        reply(msg, `Added ${name}${username ? ` (${username})` : ''} directly to priority`)
       ]);
-      await reply(msg, `Added ${name}${username ? ` (${username})` : ''} directly to priority`); return;
+      return;
     }
 
-    const [identifier] = args;
+    const identifier = sanitizeInput(args[0]);
     if (!identifier) { await reply(msg, 'Missing name.'); return; }
     const player = findPlayer(identifier);
     if (!player) { await reply(msg, 'Player not found.'); return; }
 
     if (cmd === '^p') {
       data.priority.add(playerKey(player));
-      await updateKosList(['players', 'priority']);
-      await sendLog(msg, '⭐ Player Promoted to Priority', LOG_COLORS.PRIORITY, [
-        { name: 'Name', value: player.name, inline: true },
-        { name: 'Username', value: player.username || 'N/A', inline: true },
-        { name: 'Result', value: 'Promoted to Priority', inline: false }
+      await Promise.all([
+        updateKosList(['players', 'priority']),
+        sendLog(msg, '⭐ Player Promoted to Priority', LOG_COLORS.PRIORITY, [
+          { name: 'Name', value: player.name, inline: true },
+          { name: 'Username', value: player.username || 'N/A', inline: true },
+          { name: 'Result', value: 'Promoted to Priority', inline: false }
+        ]),
+        reply(msg, `Promoted ${player.name} to priority`)
       ]);
-      await reply(msg, `Promoted ${player.name} to priority`); return;
+      return;
     }
 
     if (cmd === '^pr') {
       const ids = new Set([playerKey(player).toLowerCase(), player.name.toLowerCase()]);
       if (player.username) ids.add(player.username.toLowerCase());
       for (const k of [...data.priority]) { if (ids.has(k.toLowerCase())) data.priority.delete(k); }
-      await updateKosList(player._orphaned ? ['priority'] : ['players', 'priority']);
-      await sendLog(msg, '🔻 Player Removed from Priority', LOG_COLORS.REMOVE, [
-        { name: 'Name', value: player.name, inline: true },
-        { name: 'Username', value: player.username || 'N/A', inline: true },
-        { name: 'Result', value: 'Removed from Priority', inline: false }
+      await Promise.all([
+        updateKosList(player._orphaned ? ['priority'] : ['players', 'priority']),
+        sendLog(msg, '🔻 Player Removed from Priority', LOG_COLORS.REMOVE, [
+          { name: 'Name', value: player.name, inline: true },
+          { name: 'Username', value: player.username || 'N/A', inline: true },
+          { name: 'Result', value: 'Removed from Priority', inline: false }
+        ]),
+        reply(msg, `Removed ${player.name} from priority`)
       ]);
-      await reply(msg, `Removed ${player.name} from priority`); return;
+      return;
     }
   }
 }
@@ -803,8 +900,14 @@ client.on('interactionCreate', async i => {
   }
 });
 
-/* ===================== DUMMY SERVER FOR RENDER ===================== */
-require('http').createServer((_, res) => res.end('Bot running')).listen(process.env.PORT || 3000);
+/* ===================== HEALTH-CHECK SERVER FOR RENDER ===================== */
+require('http').createServer((req, res) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Content-Security-Policy', "default-src 'none'");
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('OK');
+}).listen(process.env.PORT || 3000);
 
 /* ===================== LOGIN + LOAD ===================== */
 client.once('ready', async () => {
