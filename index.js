@@ -25,10 +25,6 @@ const BACKUP_CHANNEL     = '1475960780976292051';
 const DEDUP_TTL_MS       = 30_000;
 
 /* ===================== DEDUP (file-backed) ===================== */
-// Primary gate: in-memory Set — synchronous and zero-latency.
-// Node.js is single-threaded so Set.has() + Set.add() can never race;
-// the second gateway fire is rejected before any async work starts.
-// Secondary gate: file store catches duplicates across process restarts.
 const claimedMemory = new Set();
 let dedupStore = {};
 
@@ -39,25 +35,18 @@ function loadDedup() {
   for (const id of Object.keys(dedupStore)) { if (dedupStore[id] < now) delete dedupStore[id]; }
 }
 
-// Atomically claims a message ID. Returns true if new, false if duplicate.
-// The in-memory check is the real lock — it executes synchronously with no
-// I/O gap, so two event-loop callbacks for the same message ID can never
-// both return true.
 function claimMessage(msgId) {
-  if (claimedMemory.has(msgId)) return false;   // already claimed this session
+  if (claimedMemory.has(msgId)) return false;
   claimedMemory.add(msgId);
   setTimeout(() => claimedMemory.delete(msgId), DEDUP_TTL_MS);
 
-  if (dedupStore[msgId] && dedupStore[msgId] > Date.now()) return false; // seen in prior session
+  if (dedupStore[msgId] && dedupStore[msgId] > Date.now()) return false;
   dedupStore[msgId] = Date.now() + DEDUP_TTL_MS;
   try { fs.writeFileSync(DEDUP_FILE, JSON.stringify(dedupStore)); } catch {}
   return true;
 }
 
 /* ===================== COMMAND QUEUE ===================== */
-// Serialises handler execution so two concurrent gateway fires for the
-// same message (which both pass claimMessage due to fs latency) can't
-// both run the command body at the same time.
 const cmdQueue = [];
 let cmdRunning = false;
 
@@ -103,8 +92,14 @@ function isOwner(i) {
   return false;
 }
 
-function rev() {
+// FIX 1: rev() now takes the current revision as a parameter so it never
+// mutates shared state mid-flight and always produces the same marker for
+// the same revision value. Call bumpRev() once before a full update cycle.
+function bumpRev() {
   data.revision++;
+}
+
+function revMarker() {
   return '\u200B'.repeat((data.revision % 10) + 1);
 }
 
@@ -282,7 +277,16 @@ function formatClans() {
 }
 
 /* ===================== LIST UPDATER ===================== */
-const updatingSections = {};
+// FIX 2: Per-section locks are now stored as Promises so they properly
+// chain — a boolean flag can't await the previous run finishing.
+const sectionLocks = {};
+
+function acquireSectionLock(key) {
+  let release;
+  const prev = sectionLocks[key] || Promise.resolve();
+  sectionLocks[key] = prev.then(() => new Promise(res => { release = res; }));
+  return prev.then(() => release);
+}
 
 const SECTION_HEADER = {
   players:  '\u2013\u2013\u2013\u2013\u2013\u2013 PLAYERS \u2013\u2013\u2013\u2013\u2013\u2013',
@@ -308,7 +312,6 @@ async function reconcileListMessages() {
     }
   }
 
-  // Delete older duplicates, keep only the most recent per section
   let changed = false;
   for (const key of ['players', 'priority', 'clans']) {
     if (found[key].length > 1) {
@@ -328,7 +331,10 @@ async function reconcileListMessages() {
   console.log('[Reconcile] Done.');
 }
 
-function splitIntoChunks(title, content, revMarker) {
+// FIX 3: splitIntoChunks now accepts the revMarker string as a plain value
+// so it never calls rev() itself — the caller stamps the marker once and
+// passes the same string into every call, keeping all chunks consistent.
+function splitIntoChunks(title, content, marker) {
   const MAX = 1900;
   const hdr = `\`\`\`${title}\n`;
   const ftr = `\n\`\`\``;
@@ -336,13 +342,13 @@ function splitIntoChunks(title, content, revMarker) {
   let cur = '';
   for (const line of content.split('\n')) {
     const test = cur ? `${cur}\n${line}` : line;
-    if (hdr.length + test.length + ftr.length + revMarker.length > MAX && cur) {
-      chunks.push(`${hdr}${cur}${ftr}${revMarker}`);
+    if (hdr.length + test.length + ftr.length + marker.length > MAX && cur) {
+      chunks.push(`${hdr}${cur}${ftr}${marker}`);
       cur = line;
     } else { cur = test; }
   }
-  if (cur) chunks.push(`${hdr}${cur}${ftr}${revMarker}`);
-  return chunks.length ? chunks : [`${hdr}None${ftr}${revMarker}`];
+  if (cur) chunks.push(`${hdr}${cur}${ftr}${marker}`);
+  return chunks.length ? chunks : [`${hdr}None${ftr}${marker}`];
 }
 
 async function updateKosList(sectionsArg = null, forceCreate = false) {
@@ -353,29 +359,53 @@ async function updateKosList(sectionsArg = null, forceCreate = false) {
     ? (Array.isArray(sectionsArg) ? sectionsArg : [sectionsArg])
     : ['players', 'priority', 'clans'];
 
+  // FIX 4: Bump revision exactly once per logical update, then capture the
+  // marker string. Every section in this update shares the same revision so
+  // they stay in sync even when run in parallel.
+  bumpRev();
+  const marker = revMarker();
+
   await Promise.all(keys.map(async key => {
-    if (!SECTION_FORMAT[key] || updatingSections[key]) return;
-    updatingSections[key] = true;
+    if (!SECTION_FORMAT[key]) return;
+
+    // Acquire the per-section mutex so concurrent calls queue rather than
+    // clobber each other. The lock is a Promise chain — never a boolean flag.
+    const release = await acquireSectionLock(key);
     try {
-      const chunks    = splitIntoChunks(SECTION_HEADER[key], SECTION_FORMAT[key](), rev());
+      const chunks    = splitIntoChunks(SECTION_HEADER[key], SECTION_FORMAT[key](), marker);
       const storedIds = [...(data.listMessages[key] || [])];
 
       if (forceCreate) {
-        for (const id of storedIds) { const m = await channel.messages.fetch(id).catch(() => null); if (m) await m.delete().catch(() => {}); }
+        for (const id of storedIds) {
+          const m = await channel.messages.fetch(id).catch(() => null);
+          if (m) await m.delete().catch(() => {});
+        }
         const newIds = [];
-        for (const chunk of chunks) { const m = await channel.send(chunk).catch(() => null); if (m) newIds.push(m.id); }
+        for (const chunk of chunks) {
+          const m = await channel.send(chunk).catch(e => { console.error(`[updateKosList] send failed for "${key}":`, e.message); return null; });
+          if (m) newIds.push(m.id);
+        }
         data.listMessages[key] = newIds;
+        console.log(`[updateKosList] forceCreate "${key}" → ${newIds.length} message(s)`);
         return;
       }
 
-      if (storedIds.length === 0) { console.warn(`[updateKosList] No IDs for "${key}" — run /list`); return; }
+      if (storedIds.length === 0) {
+        console.warn(`[updateKosList] No IDs for "${key}" — run /list`);
+        return;
+      }
 
       const verified = (await Promise.all(storedIds.map(id => channel.messages.fetch(id).catch(() => null))))
         .map((m, i) => m ? storedIds[i] : null).filter(Boolean);
 
-      if (verified.length === 0) { console.warn(`[updateKosList] "${key}" messages gone — run /list`); data.listMessages[key] = []; return; }
+      if (verified.length === 0) {
+        console.warn(`[updateKosList] "${key}" messages gone — run /list`);
+        data.listMessages[key] = [];
+        return;
+      }
 
-      // Fit chunks into available slots; merge overflow into last slot
+      // Fit chunks into verified slots; merge any overflow into the last slot.
+      // Use the same marker string — never re-call rev() here.
       let slotted;
       if (chunks.length <= verified.length) {
         slotted = chunks;
@@ -383,16 +413,24 @@ async function updateKosList(sectionsArg = null, forceCreate = false) {
         slotted = chunks.slice(0, verified.length - 1);
         const overflow = chunks.slice(verified.length - 1)
           .map(c => c.replace(/^```[^\n]*\n/, '').replace(/\n```[\u200B]*$/, '')).join('\n');
-        slotted.push(`\`\`\`${SECTION_HEADER[key]}\n${overflow}\n\`\`\`${'\u200B'.repeat((data.revision % 10) + 1)}`);
+        slotted.push(`\`\`\`${SECTION_HEADER[key]}\n${overflow}\n\`\`\`${marker}`);
       }
 
       await Promise.all(verified.map(async (id, i) => {
         const m = await channel.messages.fetch(id).catch(() => null);
-        if (m) await m.edit(i < slotted.length ? slotted[i] : '\u200B').catch(() => {});
+        if (!m) { console.warn(`[updateKosList] Slot ${i} for "${key}" vanished during edit`); return; }
+        const newContent = i < slotted.length ? slotted[i] : '\u200B';
+        // Only edit if content actually changed — avoids Discord no-op drops
+        if (m.content !== newContent) {
+          await m.edit(newContent).catch(e => console.error(`[updateKosList] edit failed for "${key}" slot ${i}:`, e.message));
+        }
       }));
 
       data.listMessages[key] = verified;
-    } finally { updatingSections[key] = false; }
+      console.log(`[updateKosList] Updated "${key}" across ${verified.length} message(s)`);
+    } finally {
+      release();
+    }
   }));
 
   saveData();
@@ -447,16 +485,9 @@ Thank you for being a part of YX!
 
 /* ===================== PREFIX COMMANDS ===================== */
 client.on('messageCreate', msg => {
-  // File-backed dedup: synchronously claim the message ID before any async work.
-  // Written to disk so it survives restarts and catches duplicate gateway events
-  // that arrive within the same JS tick (immune to in-memory race conditions).
   if (!claimMessage(msg.id)) return;
-
   if (msg.author.bot) return;
   if (!msg.content.startsWith('^')) return;
-
-  // Serialise execution through a queue so even if two fires both pass
-  // claimMessage (extremely unlikely after file-write), only one runs at a time.
   enqueueCommand(() => handleCommand(msg));
 });
 
@@ -559,7 +590,6 @@ async function handleCommand(msg) {
       await reply(msg, "You didn't add this player."); return;
     }
 
-    // Remove strictly by exact map key only — never touches players sharing the same display name
     const removeKey = playerKey(playerCheck);
     const removed   = data.players.get(removeKey);
     if (removed) data.players.delete(removeKey);
