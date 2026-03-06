@@ -332,7 +332,7 @@ function formatPlayers() {
 function formatPriority() {
   const rows = [...data.priority].map(u => {
     const p = data.players.get(u) || data.nameIndex.get(u.toLowerCase()) || data.usernameIndex.get(u.toLowerCase());
-    return { sort: p ? p.name : u, text: p ? (p.username ? `${p.name} @${p.username}` : p.name) : u };
+    return { sort: p ? p.name : u, text: p ? (p.username ? `${p.name} : ${p.username}` : p.name) : u };
   }).sort((a, b) => alpha(a.sort, b.sort)).map(r => r.text);
   return rows.length ? rows.join('\n') : 'None';
 }
