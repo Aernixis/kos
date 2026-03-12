@@ -353,7 +353,9 @@ async function sendLog(msg, action, color, fields) {
     await ch.send({ embeds: [new EmbedBuilder()
       .setColor(color)
       .setAuthor({ name: `${msg.author.username} (${msg.author.id})`, iconURL: getAvatarURL(msg.author) })
-      .setTitle(action).addFields(fields).setTimestamp()
+      .setTitle(action)
+      .addFields({ name: 'Command', value: `\`${msg.content.slice(0, 1000)}\``, inline: false }, ...fields)
+      .setTimestamp()
       .setFooter({ text: `#${msg.channel.name}` })
     ]}).catch(() => {});
   } catch {}
@@ -726,8 +728,11 @@ async function handleCommand(msg) {
     }
 
     const removeKey = playerKey(playerCheck);
-    const removed   = data.players.get(removeKey);
-    if (removed) { data.players.delete(removeKey); indexRemove(removed); }
+    // Case-insensitive map lookup — key casing may differ from what was stored
+    const removeKeyLower = removeKey.toLowerCase();
+    const actualKey = [...data.players.keys()].find(k => k.toLowerCase() === removeKeyLower) || removeKey;
+    const removed   = data.players.get(actualKey);
+    if (removed) { data.players.delete(actualKey); indexRemove(removed); }
     const krKeyLower    = removeKey.toLowerCase();
     const wasInPriority = [...data.priority].some(k => k.toLowerCase() === krKeyLower);
     for (const k of [...data.priority]) { if (k.toLowerCase() === krKeyLower) data.priority.delete(k); }
