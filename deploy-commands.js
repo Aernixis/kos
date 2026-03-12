@@ -267,8 +267,27 @@ function parseRaw(raw) {
     data.players.set(uname || p.name, player);
   });
   data.priority = new Set();
-  (raw.topPriority || []).forEach(u => u && data.priority.add(u));
-  (raw.priority    || []).forEach(u => u && data.priority.add(u));
+  // Sanitize legacy priority keys — strip @ prefix, resolve "username : name" or "name : username" to just the display name
+  const sanitizePriorityKey = (u) => {
+    if (!u) return null;
+    u = u.trim();
+    if (u.startsWith('@')) u = u.slice(1).trim();
+    // If stored as "name : username" or "username : name", keep only the part that matches a player name
+    if (u.includes(' : ')) {
+      const [a, b] = u.split(' : ').map(s => s.trim());
+      // After players are loaded, we resolve this — for now store both halves and resolve in rebuildIndexes
+      return a; // default to first part; resolveOldPriorityKeys will fix it
+    }
+    return u;
+  };
+  const rawPriorityKeys = [
+    ...(raw.topPriority || []),
+    ...(raw.priority    || [])
+  ];
+  for (const u of rawPriorityKeys) {
+    const k = sanitizePriorityKey(u);
+    if (k) data.priority.add(k);
+  }
   data.clans           = new Set(raw.clans       || []);
   data.bannedUsers     = new Set(raw.bannedUsers || []);
   data.backupMessageId = raw.backupMessageId     || null;
@@ -283,6 +302,16 @@ function parseRaw(raw) {
   data.revision      = raw.revision      || 0;
   sortData();
   rebuildIndexes();
+  // Resolve any priority keys that don't match a player name — look them up by username
+  const resolved = new Set();
+  for (const k of data.priority) {
+    const byName = data.nameIndex.get(k.toLowerCase());
+    if (byName) { resolved.add(byName.name); continue; }
+    const byUser = data.usernameIndex.get(k.toLowerCase());
+    if (byUser) { resolved.add(byUser.name); continue; }
+    resolved.add(k); // orphan — keep as-is
+  }
+  data.priority = resolved;
 }
 
 /* ===================== SAVE / LOAD ===================== */
@@ -365,16 +394,15 @@ async function sendLog(msg, action, color, fields) {
 function formatPlayers() {
   const prio = new Set([...data.priority].map(k => k.toLowerCase()));
   const rows = [...data.players.values()]
-    .filter(p => !prio.has(playerKey(p).toLowerCase()))
+    .filter(p => !prio.has(p.name.toLowerCase()))
     .sort((a, b) => alpha(a.name, b.name))
     .map(p => p.username ? `${p.name} : ${p.username}` : p.name);
   return rows.length ? rows.join('\n') : 'None';
 }
 
 function formatPriority() {
-  const rows = [...data.priority].map(u => {
-    const p = data.players.get(u) || data.nameIndex.get(u.toLowerCase()) || data.usernameIndex.get(u.toLowerCase());
-    const name = p ? p.name : u;
+  const rows = [...data.priority].map(name => {
+    const p = data.nameIndex.get(name.toLowerCase());
     const username = p ? p.username : null;
     return { sort: name, text: username ? `${name} : ${username}` : name };
   }).sort((a, b) => alpha(a.sort, b.sort)).map(r => r.text);
@@ -656,8 +684,8 @@ async function handleCommand(msg) {
     const player = { name, username, addedBy: msg.author.id };
     data.players.set(key, player);
     indexAdd(player);
-    const wasInPriority = data.priority.has(key) || [...data.priority].some(k => k.toLowerCase() === key.toLowerCase());
-    data.priority.delete(key);
+    const wasInPriority = [...data.priority].some(k => k.toLowerCase() === name.toLowerCase());
+    for (const k of [...data.priority]) { if (k.toLowerCase() === name.toLowerCase()) data.priority.delete(k); }
     const kaSections = wasInPriority ? ['players', 'priority'] : ['players'];
     await Promise.all([
       updateKosList(kaSections),
@@ -733,9 +761,9 @@ async function handleCommand(msg) {
     const actualKey = [...data.players.keys()].find(k => k.toLowerCase() === removeKeyLower) || removeKey;
     const removed   = data.players.get(actualKey);
     if (removed) { data.players.delete(actualKey); indexRemove(removed); }
-    const krKeyLower    = removeKey.toLowerCase();
-    const wasInPriority = [...data.priority].some(k => k.toLowerCase() === krKeyLower);
-    for (const k of [...data.priority]) { if (k.toLowerCase() === krKeyLower) data.priority.delete(k); }
+    const krNameLower   = (removed || playerCheck).name.toLowerCase();
+    const wasInPriority = [...data.priority].some(k => k.toLowerCase() === krNameLower);
+    for (const k of [...data.priority]) { if (k.toLowerCase() === krNameLower) data.priority.delete(k); }
     const krSections = wasInPriority ? ['players', 'priority'] : ['players'];
 
     const primary = removed || playerCheck;
@@ -789,15 +817,16 @@ async function handleCommand(msg) {
     const conflict  = checkPlayerConflict(newName, finalUser, oldKey);
     if (conflict) { await reply(msg, conflict, 6000); return; }
 
-    // Determine if this player is in priority so we keep them there under the new key
-    const wasInPriority = [...data.priority].some(k => k.toLowerCase() === oldKey.toLowerCase());
+    // Determine if this player is in priority so we keep them there under the new name
+    const keNameLower   = target.name.toLowerCase();
+    const wasInPriority = [...data.priority].some(k => k.toLowerCase() === keNameLower);
 
     // Swap out the old record for the new one
     indexRemove(target);
     data.players.delete(oldKey);
     if (wasInPriority) {
       for (const k of [...data.priority]) {
-        if (k.toLowerCase() === oldKey.toLowerCase()) data.priority.delete(k);
+        if (k.toLowerCase() === keNameLower) data.priority.delete(k);
       }
     }
 
@@ -805,7 +834,7 @@ async function handleCommand(msg) {
     const newKey  = playerKey(updated);
     data.players.set(newKey, updated);
     indexAdd(updated);
-    if (wasInPriority) data.priority.add(newKey);
+    if (wasInPriority) data.priority.add(newName);
 
     const keSections = wasInPriority ? ['players', 'priority'] : ['players'];
     await Promise.all([
@@ -947,8 +976,8 @@ async function handleCommand(msg) {
       data.players.set(key, player);
       indexAdd(player);
       // Guard against adding the same key twice to priority
-      if (![...data.priority].some(k => k.toLowerCase() === key.toLowerCase())) {
-        data.priority.add(key);
+      if (![...data.priority].some(k => k.toLowerCase() === name.toLowerCase())) {
+        data.priority.add(name);
       }
       await Promise.all([
         updateKosList(['players', 'priority']),
@@ -969,12 +998,11 @@ async function handleCommand(msg) {
 
     // ---------- ^p ----------
     if (cmd === '^p') {
-      const pKey = playerKey(player);
       // Refuse silently if already in priority
-      if ([...data.priority].some(k => k.toLowerCase() === pKey.toLowerCase())) {
+      if ([...data.priority].some(k => k.toLowerCase() === player.name.toLowerCase())) {
         await reply(msg, `${player.name} is already in priority.`); return;
       }
-      data.priority.add(pKey);
+      data.priority.add(player.name);
       await Promise.all([
         updateKosList(['players', 'priority']),
         sendLog(msg, '⭐ Player Promoted to Priority', LOG_COLORS.PRIORITY, [
@@ -989,9 +1017,8 @@ async function handleCommand(msg) {
 
     // ---------- ^pr ----------
     if (cmd === '^pr') {
-      const ids = new Set([playerKey(player).toLowerCase(), player.name.toLowerCase()]);
-      if (player.username) ids.add(player.username.toLowerCase());
-      for (const k of [...data.priority]) { if (ids.has(k.toLowerCase())) data.priority.delete(k); }
+      const prNameLower = player.name.toLowerCase();
+      for (const k of [...data.priority]) { if (k.toLowerCase() === prNameLower) data.priority.delete(k); }
       await Promise.all([
         updateKosList(player._orphaned ? ['priority'] : ['players', 'priority']),
         sendLog(msg, '🔻 Player Removed from Priority', LOG_COLORS.REMOVE, [
@@ -1030,7 +1057,7 @@ async function handleCommand(msg) {
         const newRecord = { name: newName, username: finalUser, addedBy: msg.author.id };
         data.players.set(newKey, newRecord);
         indexAdd(newRecord);
-        data.priority.add(newKey);
+        data.priority.add(newName);
 
         await Promise.all([
           updateKosList(['players', 'priority']),
@@ -1045,18 +1072,19 @@ async function handleCommand(msg) {
         return;
       }
 
-      const oldKey    = playerKey(player);
-      const finalUser = clearUser ? null : (newUser ?? player.username);
-      const conflict  = checkPlayerConflict(newName, finalUser, oldKey);
+      const oldKey      = playerKey(player);
+      const peNameLower = player.name.toLowerCase();
+      const finalUser   = clearUser ? null : (newUser ?? player.username);
+      const conflict    = checkPlayerConflict(newName, finalUser, oldKey);
       if (conflict) { await reply(msg, conflict, 6000); return; }
 
-      const wasInPriority = [...data.priority].some(k => k.toLowerCase() === oldKey.toLowerCase());
+      const wasInPriority = [...data.priority].some(k => k.toLowerCase() === peNameLower);
 
       indexRemove(player);
       data.players.delete(oldKey);
       if (wasInPriority) {
         for (const k of [...data.priority]) {
-          if (k.toLowerCase() === oldKey.toLowerCase()) data.priority.delete(k);
+          if (k.toLowerCase() === peNameLower) data.priority.delete(k);
         }
       }
 
@@ -1064,7 +1092,7 @@ async function handleCommand(msg) {
       const newKey  = playerKey(updated);
       data.players.set(newKey, updated);
       indexAdd(updated);
-      if (wasInPriority) data.priority.add(newKey);
+      if (wasInPriority) data.priority.add(newName);
 
       await Promise.all([
         updateKosList(['players', 'priority']),
