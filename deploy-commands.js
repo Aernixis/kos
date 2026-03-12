@@ -367,7 +367,7 @@ function formatPlayers() {
   const rows = [...data.players.values()]
     .filter(p => !prio.has(playerKey(p).toLowerCase()))
     .sort((a, b) => alpha(a.name, b.name))
-    .map(p => `${p.name} : ${p.username || 'N/A'}`);
+    .map(p => p.username ? `${p.name} : ${p.username}` : p.name);
   return rows.length ? rows.join('\n') : 'None';
 }
 
@@ -376,7 +376,7 @@ function formatPriority() {
     const p = data.players.get(u) || data.nameIndex.get(u.toLowerCase()) || data.usernameIndex.get(u.toLowerCase());
     const name = p ? p.name : u;
     const username = p ? p.username : null;
-    return { sort: name, text: username ? `${name} @${username}` : name };
+    return { sort: name, text: username ? `${name} : ${username}` : name };
   }).sort((a, b) => alpha(a.sort, b.sort)).map(r => r.text);
   return rows.length ? rows.join('\n') : 'None';
 }
