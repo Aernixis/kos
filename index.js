@@ -26,7 +26,7 @@ const BACKUP_CHANNEL     = '1475960780976292051';
 const DEDUP_TTL_MS       = 30_000;
 
 // Whitelist valid commands — fast-rejects unknown prefixed messages before queuing
-const VALID_COMMANDS = new Set(['^ka', '^kr', '^kca', '^kcr', '^p', '^pr', '^pa']);
+const VALID_COMMANDS = new Set(['^ka', '^kr', '^ke', '^kca', '^kcr', '^kce', '^p', '^pr', '^pa', '^pe']);
 
 /* ===================== INPUT SANITIZATION ===================== */
 /**
@@ -199,8 +199,32 @@ function findPlayer(identifier) {
 function findPlayersByName(nameLower) {
   const exact = data.nameIndex.get(nameLower);
   if (!exact) return [];
-  // Check for duplicates (same display name, different username)
   return [...data.players.values()].filter(p => p.name.toLowerCase() === nameLower);
+}
+
+/**
+ * Checks whether a name+username combo would conflict with any existing player.
+ * Pass excludeKey to skip the player currently being edited.
+ * Returns an error string if there's a conflict, or null if clear.
+ */
+function checkPlayerConflict(name, username, excludeKey = null) {
+  const nameLower = name ? name.toLowerCase() : null;
+  const userLower = username ? username.toLowerCase() : null;
+
+  for (const [key, p] of data.players.entries()) {
+    if (excludeKey && key === excludeKey) continue;
+
+    // Duplicate username — always a hard conflict
+    if (userLower && p.username && p.username.toLowerCase() === userLower) {
+      return `Username **${p.username}** is already taken by **${p.name}**.`;
+    }
+
+    // Same display name with no username on either side — ambiguous, block it
+    if (nameLower && p.name.toLowerCase() === nameLower && !p.username && !username) {
+      return `A player named **${p.name}** already exists with no username. Add a username to distinguish them, or use a different name.`;
+    }
+  }
+  return null;
 }
 
 /* ===================== BUILD / PARSE ===================== */
@@ -298,7 +322,7 @@ async function loadData() {
 }
 
 /* ===================== LOGGER ===================== */
-const LOG_COLORS = { ADD: 0x57F287, REMOVE: 0xED4245, PRIORITY: 0xFEE75C, CLAN_ADD: 0x5865F2, CLAN_REM: 0xEB459E, BAN: 0xFF6B35, ERROR: 0x95A5A6 };
+const LOG_COLORS = { ADD: 0x57F287, REMOVE: 0xED4245, PRIORITY: 0xFEE75C, CLAN_ADD: 0x5865F2, CLAN_REM: 0xEB459E, BAN: 0xFF6B35, EDIT: 0x3498DB, ERROR: 0x95A5A6 };
 
 function getAvatarURL(user) {
   if (!user.avatar) return user.defaultAvatarURL;
@@ -496,32 +520,31 @@ async function updatePanel(channel) {
 This bot organizes LBG players and clans onto the KOS list for YX members.
 **If there are multiple users with the same display name on the KOS list, a username will be required.**
 
-Player Commands
-^ka name username – Add a player to the KOS list (username optional)
-^kr name  – Remove a player from the KOS list
+**Player Commands**
+\`^ka name username\` – Add a player (username optional)
+\`^kr name\` – Remove a player
+\`^ke name newname newusername\` – Edit a player (use \`-\` to clear username)
 
 Examples
-^ka poison poisonrebuild
-^ka poison
-^kr poison
+\`^ka poison poisonrebuild\` | \`^ka poison\` | \`^kr poison\`
+\`^ke poison newpoison newpoisonuser\` | \`^ke poison newpoison -\`
 
-Clan Commands
-^kca name region – Add a clan to the KOS list
-^kcr name region – Remove a clan from the KOS list
-
-Examples
-^kca yx eu
-^kcr yx eu
-
-Priority Commands (YX Founders Only)
-^p name  – Promote a player to priority
-^pr name  – Remove a player from priority
-^pa name  – Add player directly to priority
+**Clan Commands**
+\`^kca name region\` – Add a clan
+\`^kcr name region\` – Remove a clan
+\`^kce oldname oldregion newname newregion\` – Edit a clan
 
 Examples
-^p poison
-^pr poison
-^pa poison
+\`^kca yx eu\` | \`^kcr yx eu\` | \`^kce yx eu yx na\`
+
+**Priority Commands (YX Founders Only)**
+\`^p name\` – Promote a player to priority
+\`^pr name\` – Remove a player from priority
+\`^pa name\` – Add player directly to priority
+\`^pe name newname newusername\` – Edit a priority player (use \`-\` to clear username)
+
+Examples
+\`^p poison\` | \`^pr poison\` | \`^pa poison\` | \`^pe poison newpoison newpoisonuser\`
 
 Thank you for being a part of YX!
   `);
@@ -539,9 +562,20 @@ client.on('messageCreate', msg => {
   if (!claimMessage(msg.id)) return;
   if (msg.author.bot) return;
   if (!msg.content.startsWith('^')) return;
-  // Fast-reject: only queue known commands
+
+  // Fast-reject: only handle known commands
   const cmd = msg.content.trim().split(/\s+/)[0].toLowerCase();
   if (!VALID_COMMANDS.has(cmd)) return;
+
+  // /disable blocks ALL non-owner, non-priority-role prefix commands before they touch the queue.
+  // The disabled message is sent and both messages are deleted after a short delay.
+  if (!prefixEnabled && msg.author.id !== OWNER_ID && !msg.member?.roles.cache.has(PRIORITY_ROLE_ID)) {
+    msg.channel.send(`<@${msg.author.id}> Commands are currently disabled. Please wait while fixes are being applied.`)
+      .then(m => setTimeout(() => { m.delete().catch(() => {}); msg.delete().catch(() => {}); }, 5000))
+      .catch(() => {});
+    return;
+  }
+
   enqueueCommand(() => handleCommand(msg));
 });
 
@@ -553,12 +587,6 @@ async function handleCommand(msg) {
     await msg.channel.send(`<@${msg.author.id}> fuck u kid`);
     await msg.channel.send(SPECIAL_GIF_URL);
     msg.delete().catch(() => {});
-    return;
-  }
-
-  if (!prefixEnabled && msg.author.id !== OWNER_ID) {
-    const m = await msg.channel.send('schwanz is disabled im fixing it plz wait');
-    setTimeout(() => { m.delete().catch(() => {}); msg.delete().catch(() => {}); }, 5000);
     return;
   }
 
@@ -577,31 +605,46 @@ async function handleCommand(msg) {
     const name     = sanitizeInput(args[0]);
     const username = sanitizeInput(args[1]) || null;
     if (!name) { await reply(msg, 'Missing or invalid name.'); return; }
+
+    // Full conflict check covers duplicate names (no username) and duplicate usernames
+    const conflict = checkPlayerConflict(name, username);
+    if (conflict) {
+      await Promise.all([
+        sendLog(msg, '⚠️ Add Player — Duplicate', LOG_COLORS.ERROR, [
+          { name: 'Name',     value: name,              inline: true },
+          { name: 'Username', value: username || 'N/A', inline: true },
+          { name: 'Result',   value: conflict,          inline: false }
+        ]),
+        reply(msg, conflict, 6000)
+      ]);
+      return;
+    }
+
     const key = username || name;
     if (data.players.has(key)) {
       await Promise.all([
         sendLog(msg, '⚠️ Add Player — Already Exists', LOG_COLORS.ERROR, [
-          { name: 'Name', value: name, inline: true },
+          { name: 'Name',     value: name,              inline: true },
           { name: 'Username', value: username || 'N/A', inline: true },
-          { name: 'Result', value: 'Already on KOS list', inline: false }
+          { name: 'Result',   value: 'Already on KOS list', inline: false }
         ]),
         reply(msg, `Player already in KOS: ${key}`)
       ]);
       return;
     }
+
     const player = { name, username, addedBy: msg.author.id };
     data.players.set(key, player);
     indexAdd(player);
-    // Only touch priority section if this key was an orphaned priority entry
     const wasInPriority = data.priority.has(key) || [...data.priority].some(k => k.toLowerCase() === key.toLowerCase());
     data.priority.delete(key);
     const kaSections = wasInPriority ? ['players', 'priority'] : ['players'];
     await Promise.all([
       updateKosList(kaSections),
       sendLog(msg, '✅ Player Added', LOG_COLORS.ADD, [
-        { name: 'Name', value: name, inline: true },
+        { name: 'Name',     value: name,              inline: true },
         { name: 'Username', value: username || 'N/A', inline: true },
-        { name: 'Result', value: 'Added to KOS list', inline: false }
+        { name: 'Result',   value: 'Added to KOS list', inline: false }
       ]),
       reply(msg, `Added ${name}${username ? ` (${username})` : ''}`)
     ]);
@@ -621,7 +664,7 @@ async function handleCommand(msg) {
         await Promise.all([
           sendLog(msg, '⚠️ Remove Player — Not Found', LOG_COLORS.ERROR, [
             { name: 'Identifier', value: `${identifier} (${usernameArg})`, inline: true },
-            { name: 'Result', value: 'Player not found by username', inline: false }
+            { name: 'Result',     value: 'Player not found by username', inline: false }
           ]),
           reply(msg, `Player not found with username: ${usernameArg}`)
         ]);
@@ -635,7 +678,7 @@ async function handleCommand(msg) {
           await Promise.all([
             sendLog(msg, '⚠️ Remove Player — Not Found', LOG_COLORS.ERROR, [
               { name: 'Identifier', value: identifier, inline: true },
-              { name: 'Result', value: 'Player not found', inline: false }
+              { name: 'Result',     value: 'Player not found', inline: false }
             ]),
             reply(msg, 'Player not found.')
           ]);
@@ -667,8 +710,7 @@ async function handleCommand(msg) {
     const removeKey = playerKey(playerCheck);
     const removed   = data.players.get(removeKey);
     if (removed) { data.players.delete(removeKey); indexRemove(removed); }
-    // Only update priority section if this player was actually in it
-    const krKeyLower = removeKey.toLowerCase();
+    const krKeyLower    = removeKey.toLowerCase();
     const wasInPriority = [...data.priority].some(k => k.toLowerCase() === krKeyLower);
     for (const k of [...data.priority]) { if (k.toLowerCase() === krKeyLower) data.priority.delete(k); }
     const krSections = wasInPriority ? ['players', 'priority'] : ['players'];
@@ -677,11 +719,82 @@ async function handleCommand(msg) {
     await Promise.all([
       updateKosList(krSections),
       sendLog(msg, '🗑️ Player Removed', LOG_COLORS.REMOVE, [
-        { name: 'Name', value: primary.name, inline: true },
+        { name: 'Name',     value: primary.name,              inline: true },
         { name: 'Username', value: primary.username || 'N/A', inline: true },
-        { name: 'Result', value: 'Removed from KOS list', inline: false }
+        { name: 'Result',   value: 'Removed from KOS list', inline: false }
       ]),
       reply(msg, `Removed ${primary.name}${primary.username ? ` (${primary.username})` : ''}`)
+    ]);
+    return;
+  }
+
+  // ---------- ^ke ----------
+  // Usage: ^ke <identifier> <newname> [newusername | -]
+  // "-" as newusername explicitly clears it; omitting leaves it unchanged.
+  if (cmd === '^ke') {
+    const identifier = sanitizeInput(args[0]);
+    const newName    = sanitizeInput(args[1]);
+    const rawUser    = args[2];
+    if (!identifier) { await reply(msg, 'Usage: `^ke <name> <newname> [newusername|-]`'); return; }
+    if (!newName)    { await reply(msg, 'Missing new name. Usage: `^ke <name> <newname> [newusername|-]`'); return; }
+
+    const clearUser = rawUser === '-';
+    const newUser   = clearUser ? null : (sanitizeInput(rawUser) || null);
+
+    // Resolve which player to edit
+    const byName = findPlayersByName(identifier.toLowerCase());
+    let target = null;
+    if (byName.length === 0) {
+      target = findPlayer(identifier);
+    } else if (byName.length > 1) {
+      await reply(msg,
+        `${byName.length} players share the name **${identifier}**. Use a username to identify: \`^ke <username> ...\``,
+        6000); return;
+    } else {
+      target = byName[0];
+    }
+
+    if (!target || target._orphaned) { await reply(msg, 'Player not found.'); return; }
+
+    // Permission: must be the adder, priority role, or owner
+    if (target.addedBy !== msg.author.id && msg.author.id !== OWNER_ID && !canUsePriority(msg)) {
+      await reply(msg, "You didn't add this player."); return;
+    }
+
+    const oldKey   = playerKey(target);
+    const finalUser = clearUser ? null : (newUser ?? target.username);
+    const conflict  = checkPlayerConflict(newName, finalUser, oldKey);
+    if (conflict) { await reply(msg, conflict, 6000); return; }
+
+    // Determine if this player is in priority so we keep them there under the new key
+    const wasInPriority = [...data.priority].some(k => k.toLowerCase() === oldKey.toLowerCase());
+
+    // Swap out the old record for the new one
+    indexRemove(target);
+    data.players.delete(oldKey);
+    if (wasInPriority) {
+      for (const k of [...data.priority]) {
+        if (k.toLowerCase() === oldKey.toLowerCase()) data.priority.delete(k);
+      }
+    }
+
+    const updated = { name: newName, username: finalUser, addedBy: target.addedBy };
+    const newKey  = playerKey(updated);
+    data.players.set(newKey, updated);
+    indexAdd(updated);
+    if (wasInPriority) data.priority.add(newKey);
+
+    const keSections = wasInPriority ? ['players', 'priority'] : ['players'];
+    await Promise.all([
+      updateKosList(keSections),
+      sendLog(msg, '✏️ Player Edited', LOG_COLORS.EDIT, [
+        { name: 'Old Name',     value: target.name,              inline: true },
+        { name: 'Old Username', value: target.username || 'N/A', inline: true },
+        { name: 'New Name',     value: newName,                  inline: true },
+        { name: 'New Username', value: finalUser || 'N/A',       inline: true },
+        { name: 'Result',       value: 'Player updated',         inline: false }
+      ]),
+      reply(msg, `Updated **${target.name}** → **${newName}**${finalUser ? ` (${finalUser})` : ''}`)
     ]);
     return;
   }
@@ -696,9 +809,9 @@ async function handleCommand(msg) {
     if (data.clans.has(clan)) {
       await Promise.all([
         sendLog(msg, '⚠️ Add Clan — Already Exists', LOG_COLORS.ERROR, [
-          { name: 'Name', value: clanName.toUpperCase(), inline: true },
+          { name: 'Name',   value: clanName.toUpperCase(),   inline: true },
           { name: 'Region', value: clanRegion.toUpperCase(), inline: true },
-          { name: 'Result', value: 'Already on KOS list', inline: false }
+          { name: 'Result', value: 'Already on KOS list',    inline: false }
         ]),
         reply(msg, `Clan already exists: ${clan}`)
       ]);
@@ -708,7 +821,7 @@ async function handleCommand(msg) {
     await Promise.all([
       updateKosList(['clans']),
       sendLog(msg, '✅ Clan Added', LOG_COLORS.CLAN_ADD, [
-        { name: 'Name', value: clanName.toUpperCase(), inline: true },
+        { name: 'Name',   value: clanName.toUpperCase(),   inline: true },
         { name: 'Region', value: clanRegion.toUpperCase(), inline: true },
         { name: 'Result', value: 'Clan added to KOS list', inline: false }
       ]),
@@ -728,8 +841,8 @@ async function handleCommand(msg) {
       await Promise.all([
         updateKosList(['clans']),
         sendLog(msg, '🗑️ Clan Removed', LOG_COLORS.CLAN_REM, [
-          { name: 'Name', value: clanName.toUpperCase(), inline: true },
-          { name: 'Region', value: clanRegion.toUpperCase(), inline: true },
+          { name: 'Name',   value: clanName.toUpperCase(),       inline: true },
+          { name: 'Region', value: clanRegion.toUpperCase(),     inline: true },
           { name: 'Result', value: 'Clan removed from KOS list', inline: false }
         ]),
         reply(msg, `Removed clan ${clan}`)
@@ -737,9 +850,9 @@ async function handleCommand(msg) {
     } else {
       await Promise.all([
         sendLog(msg, '⚠️ Remove Clan — Not Found', LOG_COLORS.ERROR, [
-          { name: 'Name', value: clanName.toUpperCase(), inline: true },
+          { name: 'Name',   value: clanName.toUpperCase(),   inline: true },
           { name: 'Region', value: clanRegion.toUpperCase(), inline: true },
-          { name: 'Result', value: 'Clan not found', inline: false }
+          { name: 'Result', value: 'Clan not found',         inline: false }
         ]),
         reply(msg, `Clan not found: ${clan}`)
       ]);
@@ -747,26 +860,79 @@ async function handleCommand(msg) {
     return;
   }
 
+  // ---------- ^kce ----------
+  // Usage: ^kce <oldname> <oldregion> <newname> <newregion>
+  // Priority-role only (same gate as priority commands).
+  if (cmd === '^kce') {
+    if (!canUsePriority(msg)) { await reply(msg, 'You cannot use clan edit commands.'); return; }
+    const oldName   = sanitizeInput(args[0]);
+    const oldRegion = sanitizeInput(args[1]);
+    const newName   = sanitizeInput(args[2]);
+    const newRegion = sanitizeInput(args[3]);
+    if (!oldName || !oldRegion) { await reply(msg, 'Usage: `^kce <oldname> <oldregion> <newname> <newregion>`'); return; }
+    if (!newName || !newRegion) { await reply(msg, 'Missing new name/region. Usage: `^kce <oldname> <oldregion> <newname> <newregion>`'); return; }
+
+    const oldClan = `${oldRegion.toUpperCase()}»${oldName.toUpperCase()}`;
+    const newClan = `${newRegion.toUpperCase()}»${newName.toUpperCase()}`;
+
+    if (!data.clans.has(oldClan)) {
+      await Promise.all([
+        sendLog(msg, '⚠️ Edit Clan — Not Found', LOG_COLORS.ERROR, [
+          { name: 'Clan',   value: oldClan,        inline: true },
+          { name: 'Result', value: 'Clan not found', inline: false }
+        ]),
+        reply(msg, `Clan not found: ${oldClan}`)
+      ]);
+      return;
+    }
+
+    if (oldClan !== newClan && data.clans.has(newClan)) {
+      await reply(msg, `Clan already exists: ${newClan}`); return;
+    }
+
+    data.clans.delete(oldClan);
+    data.clans.add(newClan);
+    await Promise.all([
+      updateKosList(['clans']),
+      sendLog(msg, '✏️ Clan Edited', LOG_COLORS.EDIT, [
+        { name: 'Old Clan', value: oldClan,        inline: true },
+        { name: 'New Clan', value: newClan,        inline: true },
+        { name: 'Result',   value: 'Clan updated', inline: false }
+      ]),
+      reply(msg, `Updated clan **${oldClan}** → **${newClan}**`)
+    ]);
+    return;
+  }
+
   // ---------- Priority commands ----------
-  if (['^p', '^pr', '^pa'].includes(cmd)) {
+  if (['^p', '^pr', '^pa', '^pe'].includes(cmd)) {
     if (!canUsePriority(msg)) { await reply(msg, 'You cannot use priority commands.'); return; }
 
+    // ---------- ^pa ----------
     if (cmd === '^pa') {
       const name     = sanitizeInput(args[0]);
       const username = sanitizeInput(args[1]) || null;
       if (!name) { await reply(msg, 'Missing name.'); return; }
+
+      const conflict = checkPlayerConflict(name, username);
+      if (conflict) { await reply(msg, conflict, 6000); return; }
+
       const key = username || name;
       if (data.players.has(key)) { await reply(msg, `Player already exists: ${key}`); return; }
+
       const player = { name, username, addedBy: msg.author.id };
       data.players.set(key, player);
       indexAdd(player);
-      data.priority.add(key);
+      // Guard against adding the same key twice to priority
+      if (![...data.priority].some(k => k.toLowerCase() === key.toLowerCase())) {
+        data.priority.add(key);
+      }
       await Promise.all([
         updateKosList(['players', 'priority']),
         sendLog(msg, '⭐ Player Added to Priority (Direct)', LOG_COLORS.PRIORITY, [
-          { name: 'Name', value: name, inline: true },
+          { name: 'Name',     value: name,              inline: true },
           { name: 'Username', value: username || 'N/A', inline: true },
-          { name: 'Result', value: 'Added directly to Priority', inline: false }
+          { name: 'Result',   value: 'Added directly to Priority', inline: false }
         ]),
         reply(msg, `Added ${name}${username ? ` (${username})` : ''} directly to priority`)
       ]);
@@ -778,20 +944,27 @@ async function handleCommand(msg) {
     const player = findPlayer(identifier);
     if (!player) { await reply(msg, 'Player not found.'); return; }
 
+    // ---------- ^p ----------
     if (cmd === '^p') {
-      data.priority.add(playerKey(player));
+      const pKey = playerKey(player);
+      // Refuse silently if already in priority
+      if ([...data.priority].some(k => k.toLowerCase() === pKey.toLowerCase())) {
+        await reply(msg, `${player.name} is already in priority.`); return;
+      }
+      data.priority.add(pKey);
       await Promise.all([
         updateKosList(['players', 'priority']),
         sendLog(msg, '⭐ Player Promoted to Priority', LOG_COLORS.PRIORITY, [
-          { name: 'Name', value: player.name, inline: true },
+          { name: 'Name',     value: player.name,              inline: true },
           { name: 'Username', value: player.username || 'N/A', inline: true },
-          { name: 'Result', value: 'Promoted to Priority', inline: false }
+          { name: 'Result',   value: 'Promoted to Priority',   inline: false }
         ]),
         reply(msg, `Promoted ${player.name} to priority`)
       ]);
       return;
     }
 
+    // ---------- ^pr ----------
     if (cmd === '^pr') {
       const ids = new Set([playerKey(player).toLowerCase(), player.name.toLowerCase()]);
       if (player.username) ids.add(player.username.toLowerCase());
@@ -799,11 +972,87 @@ async function handleCommand(msg) {
       await Promise.all([
         updateKosList(player._orphaned ? ['priority'] : ['players', 'priority']),
         sendLog(msg, '🔻 Player Removed from Priority', LOG_COLORS.REMOVE, [
-          { name: 'Name', value: player.name, inline: true },
+          { name: 'Name',     value: player.name,              inline: true },
           { name: 'Username', value: player.username || 'N/A', inline: true },
-          { name: 'Result', value: 'Removed from Priority', inline: false }
+          { name: 'Result',   value: 'Removed from Priority',  inline: false }
         ]),
         reply(msg, `Removed ${player.name} from priority`)
+      ]);
+      return;
+    }
+
+    // ---------- ^pe ----------
+    // Usage: ^pe <identifier> <newname> [newusername | -]
+    // Works like ^ke but is restricted to priority-role holders.
+    // Also fixes up the priority set key so the player stays in priority under their new key.
+    if (cmd === '^pe') {
+      const newName  = sanitizeInput(args[1]);
+      const rawUser  = args[2];
+      if (!newName) { await reply(msg, 'Usage: `^pe <name> <newname> [newusername|-]`'); return; }
+
+      const clearUser = rawUser === '-';
+      const newUser   = clearUser ? null : (sanitizeInput(rawUser) || null);
+
+      if (player._orphaned) {
+        // Orphaned priority entry — no player record, just rename the key and create the record
+        const finalUser = clearUser ? null : (newUser ?? null);
+        const conflict  = checkPlayerConflict(newName, finalUser);
+        if (conflict) { await reply(msg, conflict, 6000); return; }
+
+        const oldKey = player.name;
+        for (const k of [...data.priority]) {
+          if (k.toLowerCase() === oldKey.toLowerCase()) data.priority.delete(k);
+        }
+        const newKey    = finalUser || newName;
+        const newRecord = { name: newName, username: finalUser, addedBy: msg.author.id };
+        data.players.set(newKey, newRecord);
+        indexAdd(newRecord);
+        data.priority.add(newKey);
+
+        await Promise.all([
+          updateKosList(['players', 'priority']),
+          sendLog(msg, '✏️ Priority Player Edited (Orphan)', LOG_COLORS.EDIT, [
+            { name: 'Old Key',      value: oldKey,             inline: true },
+            { name: 'New Name',     value: newName,            inline: true },
+            { name: 'New Username', value: finalUser || 'N/A', inline: true },
+            { name: 'Result',       value: 'Priority entry updated', inline: false }
+          ]),
+          reply(msg, `Updated priority entry **${oldKey}** → **${newName}**${finalUser ? ` (${finalUser})` : ''}`)
+        ]);
+        return;
+      }
+
+      const oldKey    = playerKey(player);
+      const finalUser = clearUser ? null : (newUser ?? player.username);
+      const conflict  = checkPlayerConflict(newName, finalUser, oldKey);
+      if (conflict) { await reply(msg, conflict, 6000); return; }
+
+      const wasInPriority = [...data.priority].some(k => k.toLowerCase() === oldKey.toLowerCase());
+
+      indexRemove(player);
+      data.players.delete(oldKey);
+      if (wasInPriority) {
+        for (const k of [...data.priority]) {
+          if (k.toLowerCase() === oldKey.toLowerCase()) data.priority.delete(k);
+        }
+      }
+
+      const updated = { name: newName, username: finalUser, addedBy: player.addedBy };
+      const newKey  = playerKey(updated);
+      data.players.set(newKey, updated);
+      indexAdd(updated);
+      if (wasInPriority) data.priority.add(newKey);
+
+      await Promise.all([
+        updateKosList(['players', 'priority']),
+        sendLog(msg, '✏️ Priority Player Edited', LOG_COLORS.EDIT, [
+          { name: 'Old Name',     value: player.name,              inline: true },
+          { name: 'Old Username', value: player.username || 'N/A', inline: true },
+          { name: 'New Name',     value: newName,                  inline: true },
+          { name: 'New Username', value: finalUser || 'N/A',       inline: true },
+          { name: 'Result',       value: 'Priority player updated', inline: false }
+        ]),
+        reply(msg, `Updated **${player.name}** → **${newName}**${finalUser ? ` (${finalUser})` : ''}`)
       ]);
       return;
     }
