@@ -448,7 +448,7 @@ function formatPriority() {
   const rows = [...data.priority].map(name => {
     const p = data.nameIndex.get(name.toLowerCase());
     const username = p ? p.username : null;
-    return { sort: name, text: username ? `${name} : ${username}` : name };
+    return { sort: name, text: username ? `${name} @${username}` : name };
   }).sort((a, b) => alpha(a.sort, b.sort)).map(r => r.text);
   return rows.length ? rows.join('\n') : 'None';
 }
