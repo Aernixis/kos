@@ -615,11 +615,14 @@ This bot organizes LBG players and clans onto the KOS list for YX members.
 **Player Commands**
 \`^ka name username\` – Add a player (username optional)
 \`^kr name\` – Remove a player
-\`^ke name newname newusername\` – Edit a player (use \`-\` to clear username)
+\`^ke name newname newusername\` – Edit a player with no username
+\`^ke name oldusername newname newusername\` – Edit a player with a username (use \`-\` for no username)
 
 Examples
 \`^ka poison poisonrebuild\` | \`^ka poison\` | \`^kr poison\`
-\`^ke poison newpoison newpoisonuser\` | \`^ke poison newpoison -\`
+\`^ke poison newpoison newpoisonuser\` ← poison has no username
+\`^ke poison poisonrebuild newpoison newpoisonuser\` ← poison has a username
+\`^ke poison poisonrebuild newpoison -\` ← clear username
 
 **Clan Commands**
 \`^kca name region\` – Add a clan
@@ -633,10 +636,14 @@ Examples
 \`^p name\` – Promote a player to priority
 \`^pr name\` – Remove a player from priority
 \`^pa name\` – Add player directly to priority
-\`^pe name newname newusername\` – Edit a priority player (use \`-\` to clear username)
+\`^pe name newname newusername\` – Edit a priority player with no username
+\`^pe name oldusername newname newusername\` – Edit a priority player with a username (use \`-\` for no username)
 
 Examples
-\`^p poison\` | \`^pr poison\` | \`^pa poison\` | \`^pe poison newpoison newpoisonuser\`
+\`^p poison\` | \`^pr poison\` | \`^pa poison\`
+\`^pe poison newpoison newpoisonuser\` ← poison has no username
+\`^pe poison poisonrebuild newpoison newpoisonuser\` ← poison has a username
+\`^pe poison poisonrebuild newpoison -\` ← clear username
 
 Thank you for being a part of YX!
   `);
@@ -823,79 +830,86 @@ async function handleCommand(msg) {
     return;
   }
 
+  // Shared arg parser for ^ke / ^pe.
+  // 3 args → oldname newname newusername (only valid if oldname has NO username)
+  // 4 args → oldname oldusername newname newusername  (oldusername "-" = no username)
+  function resolveEditArgs(a) {
+    if (a.length === 3) {
+      return { oldName: sanitizeInput(a[0]), oldUser: null, newName: sanitizeInput(a[1]), newUser: sanitizeInput(a[2]) === '-' ? null : sanitizeInput(a[2]), threeArg: true };
+    }
+    if (a.length >= 4) {
+      return { oldName: sanitizeInput(a[0]), oldUser: a[1] === '-' ? null : sanitizeInput(a[1]), newName: sanitizeInput(a[2]), newUser: a[3] === '-' ? null : sanitizeInput(a[3]), threeArg: false };
+    }
+    return null;
+  }
+
   // ---------- ^ke ----------
-  // Usage: ^ke <identifier> <newname> [newusername | -]
-  // "-" as newusername explicitly clears it; omitting leaves it unchanged.
+  // 3-arg: ^ke <oldname> <newname> <newusername|->   (only if oldname has no username)
+  // 4-arg: ^ke <oldname> <oldusername|-> <newname> <newusername|->
   if (cmd === '^ke') {
-    const identifier = sanitizeInput(args[0]);
-    const newName    = sanitizeInput(args[1]);
-    const rawUser    = args[2];
-    if (!identifier) { await reply(msg, 'Usage: `^ke <name> <newname> [newusername|-]`'); return; }
-    if (!newName)    { await reply(msg, 'Missing new name. Usage: `^ke <name> <newname> [newusername|-]`'); return; }
+    const ea = resolveEditArgs(args);
+    if (!ea || !ea.oldName || !ea.newName) {
+      await reply(msg, 'Usage: `^ke <oldname> <newname> <newusername|->` or `^ke <oldname> <oldusername|-> <newname> <newusername|->`', 6000); return;
+    }
 
-    const clearUser = rawUser === '-';
-    const newUser   = clearUser ? null : (sanitizeInput(rawUser) || null);
-
-    // Resolve which player to edit
-    const byName = findPlayersByName(identifier.toLowerCase());
+    // Resolve target
     let target = null;
-    if (byName.length === 0) {
-      target = findPlayer(identifier);
-    } else if (byName.length > 1) {
-      await reply(msg,
-        `${byName.length} players share the name **${identifier}**. Use a username to identify: \`^ke <username> ...\``,
-        6000); return;
+    if (ea.threeArg) {
+      // 3-arg: oldname must exist with NO username
+      const matches = findPlayersByName(ea.oldName.toLowerCase());
+      if (matches.length === 0) { await reply(msg, 'Player not found.'); return; }
+      if (matches.length > 1 || matches[0].username) {
+        await reply(msg, `**${ea.oldName}** has a username — use the 4-arg format: \`^ke ${ea.oldName} <oldusername|-> <newname> <newusername|->\``, 6000); return;
+      }
+      target = matches[0];
     } else {
-      target = byName[0];
+      if (ea.oldUser) {
+        target = data.usernameIndex.get(ea.oldUser.toLowerCase()) || null;
+      } else {
+        const matches = findPlayersByName(ea.oldName.toLowerCase());
+        if (matches.length === 1) target = matches[0];
+        else if (matches.length > 1) { await reply(msg, `Multiple players named **${ea.oldName}**. Specify username.`, 6000); return; }
+        else target = findPlayer(ea.oldName);
+      }
     }
 
     if (!target || target._orphaned) { await reply(msg, 'Player not found.'); return; }
-
-    // Permission: must be the adder, priority role, or owner
     if (target.addedBy !== msg.author.id && msg.author.id !== OWNER_ID && !canUsePriority(msg)) {
       await reply(msg, "You didn't add this player."); return;
     }
 
-    const oldKey   = playerKey(target);
-    const finalUser = clearUser ? null : (newUser ?? target.username);
-    const conflict  = checkPlayerConflict(newName, finalUser, oldKey);
+    const oldKey        = playerKey(target);
+    const conflict      = checkPlayerConflict(ea.newName, ea.newUser, oldKey);
     if (conflict) { await reply(msg, conflict, 6000); return; }
 
-    // Determine if this player is in priority so we keep them there under the new name
     const keNameLower   = target.name.toLowerCase();
     const wasInPriority = [...data.priority].some(k => k.toLowerCase() === keNameLower);
-
-    // Swap out the old record for the new one
     indexRemove(target);
     data.players.delete(oldKey);
     if (wasInPriority) {
-      for (const k of [...data.priority]) {
-        if (k.toLowerCase() === keNameLower) data.priority.delete(k);
-      }
+      for (const k of [...data.priority]) { if (k.toLowerCase() === keNameLower) data.priority.delete(k); }
     }
 
-    const updated = { name: newName, username: finalUser, addedBy: target.addedBy };
-    const newKey  = playerKey(updated);
-    data.players.set(newKey, updated);
+    const updated = { name: ea.newName, username: ea.newUser, addedBy: target.addedBy };
+    data.players.set(playerKey(updated), updated);
     indexAdd(updated);
-    if (wasInPriority) data.priority.add(newName);
+    if (wasInPriority) data.priority.add(ea.newName);
 
-    const keSections = wasInPriority ? ['players', 'priority'] : ['players'];
     await Promise.all([
-      updateKosList(keSections),
+      updateKosList(wasInPriority ? ['players', 'priority'] : ['players']),
       sendLog(msg, '✏️ Player Edited', LOG_COLORS.EDIT, [
         { name: 'Old Name',     value: target.name,              inline: true },
         { name: 'Old Username', value: target.username || 'N/A', inline: true },
-        { name: 'New Name',     value: newName,                  inline: true },
-        { name: 'New Username', value: finalUser || 'N/A',       inline: true },
+        { name: 'New Name',     value: ea.newName,               inline: true },
+        { name: 'New Username', value: ea.newUser || 'N/A',      inline: true },
         { name: 'Result',       value: 'Player updated',         inline: false }
       ]),
-      reply(msg, `Updated **${target.name}** → **${newName}**${finalUser ? ` (${finalUser})` : ''}`)
+      reply(msg, `Updated **${target.name}** → **${ea.newName}**${ea.newUser ? ` (${ea.newUser})` : ''}`)
     ]);
     return;
   }
 
-  // ---------- ^kca ----------
+  // ---------- ^kca ----------  // ---------- ^kca ----------
   if (cmd === '^kca') {
     const clanName   = sanitizeInput(args[0]);
     const clanRegion = sanitizeInput(args[1]);
@@ -1076,78 +1090,82 @@ async function handleCommand(msg) {
     }
 
     // ---------- ^pe ----------
-    // Usage: ^pe <identifier> <newname> [newusername | -]
-    // Works like ^ke but is restricted to priority-role holders.
-    // Also fixes up the priority set key so the player stays in priority under their new key.
+    // 3-arg: ^pe <oldname> <newname> <newusername|->   (only if oldname has no username)
+    // 4-arg: ^pe <oldname> <oldusername|-> <newname> <newusername|->
     if (cmd === '^pe') {
-      const newName  = sanitizeInput(args[1]);
-      const rawUser  = args[2];
-      if (!newName) { await reply(msg, 'Usage: `^pe <name> <newname> [newusername|-]`'); return; }
+      const ea = resolveEditArgs(args);
+      if (!ea || !ea.oldName || !ea.newName) {
+        await reply(msg, 'Usage: `^pe <oldname> <newname> <newusername|->` or `^pe <oldname> <oldusername|-> <newname> <newusername|->`', 6000); return;
+      }
 
-      const clearUser = rawUser === '-';
-      const newUser   = clearUser ? null : (sanitizeInput(rawUser) || null);
-
-      if (player._orphaned) {
-        // Orphaned priority entry — no player record, just rename the key and create the record
-        const finalUser = clearUser ? null : (newUser ?? null);
-        const conflict  = checkPlayerConflict(newName, finalUser);
-        if (conflict) { await reply(msg, conflict, 6000); return; }
-
-        const oldKey = player.name;
-        for (const k of [...data.priority]) {
-          if (k.toLowerCase() === oldKey.toLowerCase()) data.priority.delete(k);
+      // Resolve target
+      let peTarget = null;
+      if (ea.threeArg) {
+        const matches = findPlayersByName(ea.oldName.toLowerCase());
+        if (matches.length === 0) peTarget = findPlayer(ea.oldName); // may be orphan
+        else if (matches.length > 1 || matches[0].username) {
+          await reply(msg, `**${ea.oldName}** has a username — use the 4-arg format: \`^pe ${ea.oldName} <oldusername|-> <newname> <newusername|->\``, 6000); return;
+        } else { peTarget = matches[0]; }
+      } else {
+        if (ea.oldUser) {
+          peTarget = data.usernameIndex.get(ea.oldUser.toLowerCase()) || null;
+        } else {
+          const matches = findPlayersByName(ea.oldName.toLowerCase());
+          if (matches.length === 1) peTarget = matches[0];
+          else if (matches.length > 1) { await reply(msg, `Multiple players named **${ea.oldName}**. Specify username.`, 6000); return; }
+          else peTarget = findPlayer(ea.oldName);
         }
-        const newKey    = finalUser || newName;
-        const newRecord = { name: newName, username: finalUser, addedBy: msg.author.id };
-        data.players.set(newKey, newRecord);
-        indexAdd(newRecord);
-        data.priority.add(newName);
+      }
 
+      if (!peTarget) { await reply(msg, 'Player not found.'); return; }
+
+      const conflict = checkPlayerConflict(ea.newName, ea.newUser, peTarget._orphaned ? null : playerKey(peTarget));
+      if (conflict) { await reply(msg, conflict, 6000); return; }
+
+      if (peTarget._orphaned) {
+        const oldKey = peTarget.name;
+        for (const k of [...data.priority]) { if (k.toLowerCase() === oldKey.toLowerCase()) data.priority.delete(k); }
+        const newRecord = { name: ea.newName, username: ea.newUser, addedBy: msg.author.id };
+        data.players.set(playerKey(newRecord), newRecord);
+        indexAdd(newRecord);
+        data.priority.add(ea.newName);
         await Promise.all([
           updateKosList(['players', 'priority']),
           sendLog(msg, '✏️ Priority Player Edited (Orphan)', LOG_COLORS.EDIT, [
-            { name: 'Old Key',      value: oldKey,             inline: true },
-            { name: 'New Name',     value: newName,            inline: true },
-            { name: 'New Username', value: finalUser || 'N/A', inline: true },
+            { name: 'Old Key',      value: oldKey,                inline: true },
+            { name: 'New Name',     value: ea.newName,            inline: true },
+            { name: 'New Username', value: ea.newUser || 'N/A',   inline: true },
             { name: 'Result',       value: 'Priority entry updated', inline: false }
           ]),
-          reply(msg, `Updated priority entry **${oldKey}** → **${newName}**${finalUser ? ` (${finalUser})` : ''}`)
+          reply(msg, `Updated **${oldKey}** → **${ea.newName}**${ea.newUser ? ` (${ea.newUser})` : ''}`)
         ]);
         return;
       }
 
-      const oldKey      = playerKey(player);
-      const peNameLower = player.name.toLowerCase();
-      const finalUser   = clearUser ? null : (newUser ?? player.username);
-      const conflict    = checkPlayerConflict(newName, finalUser, oldKey);
-      if (conflict) { await reply(msg, conflict, 6000); return; }
-
+      const oldKey      = playerKey(peTarget);
+      const peNameLower = peTarget.name.toLowerCase();
       const wasInPriority = [...data.priority].some(k => k.toLowerCase() === peNameLower);
-
-      indexRemove(player);
+      indexRemove(peTarget);
       data.players.delete(oldKey);
       if (wasInPriority) {
-        for (const k of [...data.priority]) {
-          if (k.toLowerCase() === peNameLower) data.priority.delete(k);
-        }
+        for (const k of [...data.priority]) { if (k.toLowerCase() === peNameLower) data.priority.delete(k); }
       }
 
-      const updated = { name: newName, username: finalUser, addedBy: player.addedBy };
-      const newKey  = playerKey(updated);
-      data.players.set(newKey, updated);
+      const updated = { name: ea.newName, username: ea.newUser, addedBy: peTarget.addedBy };
+      data.players.set(playerKey(updated), updated);
       indexAdd(updated);
-      if (wasInPriority) data.priority.add(newName);
+      if (wasInPriority) data.priority.add(ea.newName);
 
       await Promise.all([
         updateKosList(['players', 'priority']),
         sendLog(msg, '✏️ Priority Player Edited', LOG_COLORS.EDIT, [
-          { name: 'Old Name',     value: player.name,              inline: true },
-          { name: 'Old Username', value: player.username || 'N/A', inline: true },
-          { name: 'New Name',     value: newName,                  inline: true },
-          { name: 'New Username', value: finalUser || 'N/A',       inline: true },
-          { name: 'Result',       value: 'Priority player updated', inline: false }
+          { name: 'Old Name',     value: peTarget.name,              inline: true },
+          { name: 'Old Username', value: peTarget.username || 'N/A', inline: true },
+          { name: 'New Name',     value: ea.newName,                 inline: true },
+          { name: 'New Username', value: ea.newUser || 'N/A',        inline: true },
+          { name: 'Result',       value: 'Priority player updated',  inline: false }
         ]),
-        reply(msg, `Updated **${player.name}** → **${newName}**${finalUser ? ` (${finalUser})` : ''}`)
+        reply(msg, `Updated **${peTarget.name}** → **${ea.newName}**${ea.newUser ? ` (${ea.newUser})` : ''}`)
       ]);
       return;
     }
