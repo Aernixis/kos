@@ -271,14 +271,13 @@ function parseRaw(raw) {
   const sanitizePriorityKey = (u) => {
     if (!u) return null;
     u = u.trim();
+    // Strip leading @ (e.g. "@username")
     if (u.startsWith('@')) u = u.slice(1).trim();
-    // If stored as "name : username" or "username : name", keep only the part that matches a player name
-    if (u.includes(' : ')) {
-      const [a, b] = u.split(' : ').map(s => s.trim());
-      // After players are loaded, we resolve this — for now store both halves and resolve in rebuildIndexes
-      return a; // default to first part; resolveOldPriorityKeys will fix it
-    }
-    return u;
+    // Strip inline @username suffix (e.g. "Rekt @primalflick2024" → "Rekt")
+    if (u.includes(' @')) u = u.split(' @')[0].trim();
+    // Strip " : username" suffix (e.g. "name : username" → "name")
+    if (u.includes(' : ')) u = u.split(' : ')[0].trim();
+    return u || null;
   };
   const rawPriorityKeys = [
     ...(raw.topPriority || []),
@@ -301,28 +300,8 @@ function parseRaw(raw) {
   data.panelMessages = raw.panelMessages || data.panelMessages;
   data.revision      = raw.revision      || 0;
   rebuildIndexes(); // must come before priority resolution so indexes are available
-  // Resolve all priority keys to their canonical display name.
-  // Handles legacy formats: raw username, "@username", "name : username", "username : name"
-  const resolved = new Set();
-  for (const k of data.priority) {
-    // Try direct name match first
-    const byName = data.nameIndex.get(k.toLowerCase());
-    if (byName) { resolved.add(byName.name); continue; }
-    // Try username match (legacy: priority stored username as key)
-    const byUser = data.usernameIndex.get(k.toLowerCase());
-    if (byUser) { resolved.add(byUser.name); continue; }
-    // Try splitting "a : b" — check both sides
-    if (k.includes(' : ')) {
-      const [a, b] = k.split(' : ').map(s => s.trim());
-      const byA = data.nameIndex.get(a.toLowerCase()) || data.usernameIndex.get(a.toLowerCase());
-      if (byA) { resolved.add(byA.name); continue; }
-      const byB = data.nameIndex.get(b.toLowerCase()) || data.usernameIndex.get(b.toLowerCase());
-      if (byB) { resolved.add(byB.name); continue; }
-    }
-    resolved.add(k); // orphan — keep as-is
-    console.warn(`[Priority] Orphan key kept: "${k}"`);
-  }
-  data.priority = resolved;
+  deduplicatePlayers();
+  data.priority = resolvePriority(data.priority);
   console.log('[Priority] Resolved:', [...data.priority].join(', '));
   sortData();
 }
@@ -404,6 +383,58 @@ async function sendLog(msg, action, color, fields) {
 }
 
 /* ===================== FORMATTERS ===================== */
+
+/**
+ * Resolves a Set of priority keys to canonical display names.
+ * Handles legacy formats: raw username, "@username", "Name @username", "name : username".
+ * Deduplicates case-insensitively.
+ */
+function resolvePriority(prioritySet) {
+  const resolved = new Set();
+  const seen = new Set();
+  for (const k of prioritySet) {
+    const byName = data.nameIndex.get(k.toLowerCase());
+    if (byName) {
+      if (!seen.has(byName.name.toLowerCase())) { resolved.add(byName.name); seen.add(byName.name.toLowerCase()); }
+      continue;
+    }
+    const byUser = data.usernameIndex.get(k.toLowerCase());
+    if (byUser) {
+      if (!seen.has(byUser.name.toLowerCase())) { resolved.add(byUser.name); seen.add(byUser.name.toLowerCase()); }
+      continue;
+    }
+    // Clean orphan — just a name with no player record yet
+    if (!seen.has(k.toLowerCase())) { resolved.add(k); seen.add(k.toLowerCase()); }
+  }
+  return resolved;
+}
+
+/**
+ * Removes duplicate players from data.players (same name+username combo).
+ * Also removes any player whose name already appears in another entry with same casing.
+ * Called after any bulk load to guarantee no duplicates exist.
+ */
+function deduplicatePlayers() {
+  const seenNames = new Map();     // lowercase name → first player seen
+  const seenUsernames = new Set(); // lowercase username
+  const toDelete = [];
+  for (const [key, p] of data.players.entries()) {
+    const nl = p.name.toLowerCase();
+    const ul = p.username ? p.username.toLowerCase() : null;
+    let isDup = false;
+    if (ul && seenUsernames.has(ul)) { isDup = true; }
+    if (!ul && seenNames.has(nl) && !seenNames.get(nl).username) { isDup = true; }
+    if (isDup) { toDelete.push(key); continue; }
+    seenNames.set(nl, p);
+    if (ul) seenUsernames.add(ul);
+  }
+  for (const key of toDelete) {
+    const p = data.players.get(key);
+    if (p) { indexRemove(p); data.players.delete(key); }
+    console.warn(`[Dedup] Removed duplicate player: "${key}"`);
+  }
+}
+
 function formatPlayers() {
   const prio = new Set([...data.priority].map(k => k.toLowerCase()));
   const rows = [...data.players.values()]
@@ -1157,28 +1188,7 @@ client.on('interactionCreate', async i => {
       parseRaw(await (await fetch(msg.attachments.find(a => a.name === 'data.json').url)).json());
     } catch { return i.editReply({ content: '❌ Failed to load from backup channel.' }); }
     // Force-resolve priority keys to display names — fixes any legacy data still in the backup
-    const fixedPriority = new Set();
-    for (const k of data.priority) {
-      const byName = data.nameIndex.get(k.toLowerCase());
-      if (byName) { fixedPriority.add(byName.name); continue; }
-      const byUser = data.usernameIndex.get(k.toLowerCase());
-      if (byUser) { fixedPriority.add(byUser.name); continue; }
-      if (k.includes(' : ')) {
-        const [a, b] = k.split(' : ').map(s => s.trim());
-        const byA = data.nameIndex.get(a.toLowerCase()) || data.usernameIndex.get(a.toLowerCase());
-        if (byA) { fixedPriority.add(byA.name); continue; }
-        const byB = data.nameIndex.get(b.toLowerCase()) || data.usernameIndex.get(b.toLowerCase());
-        if (byB) { fixedPriority.add(byB.name); continue; }
-      }
-      if (k.startsWith('@')) {
-        const stripped = k.slice(1).trim();
-        const byStripped = data.nameIndex.get(stripped.toLowerCase()) || data.usernameIndex.get(stripped.toLowerCase());
-        if (byStripped) { fixedPriority.add(byStripped.name); continue; }
-      }
-      fixedPriority.add(k);
-      console.warn(`[/list] Orphan priority key kept: "${k}"`);
-    }
-    data.priority = fixedPriority;
+    data.priority = resolvePriority(data.priority);
     console.log('[/list] Priority after fix:', [...data.priority].join(', '));
     await updateKosList(null, true);
     await pushBackup();
