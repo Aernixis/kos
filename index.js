@@ -615,7 +615,7 @@ This bot organizes LBG players and clans onto the KOS list for YX members.
 **Player Commands**
 \`^ka poison poisonrebuild\` – Add a player
 \`^kr poison \` – Remove a player
-\`^ke anonymous anonymous_vas00 (or -) poison poisonrebuild\` – Edit a player with no username (use \`-\` for no username)
+\`^ke facial anonymous_vas00 (or -) poison poisonrebuild\` – Edit a player with no username (use \`-\` for no username)
 
 **Clan Commands**
 \`^kca YX EU\` – Add a clan
@@ -626,7 +626,7 @@ This bot organizes LBG players and clans onto the KOS list for YX members.
 \`^p poison \` – Promote a player to priority
 \`^pr poison\` – Remove a player from priority
 \`^pa poison\` – Add player directly to priority
-\`^pe anonymous anonymous_vas00 (or -) poison poisonrebuild\` – Edit a priority player with no username (use \`-\` for no username)
+\`^pe facial anonymous_vas00 (or -) poison poisonrebuild\` – Edit a priority player with no username (use \`-\` for no username)
 
 Thank you for being a part of YX!
   `);
