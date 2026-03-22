@@ -17,8 +17,8 @@ const client = new Client({
 const OWNER_ID           = '1283217337084018749';
 const PRIORITY_ROLE_ID   = '1412837397607092405';
 const DATA_FILE          = './data.json';
-const SETTINGS_FILE      = './settings.json';
 const DEDUP_FILE         = './dedup.json';
+const SETTINGS_CHANNEL   = '1485078466830405663';
 const SPECIAL_USER_ID    = '760369177180897290';
 const SPECIAL_GIF_URL    = 'https://tenor.com/view/chainsawman-chainsaw-man-reze-reze-arc-chainsaw-man-reze-gif-13447210726051357373';
 const SUBMISSION_CHANNEL = '1450867784543113318';
@@ -30,10 +30,6 @@ const DEDUP_TTL_MS       = 30_000;
 const VALID_COMMANDS = new Set(['^ka', '^kr', '^ke', '^kca', '^kcr', '^kce', '^p', '^pr', '^pa', '^pe']);
 
 /* ===================== INPUT SANITIZATION ===================== */
-/**
- * Strip control characters and limit length to prevent injection / oversized inputs.
- * Max 64 chars covers any realistic game name or username.
- */
 function sanitizeInput(str, maxLen = 64) {
   if (typeof str !== 'string') return null;
   // eslint-disable-next-line no-control-regex
@@ -47,7 +43,6 @@ const claimedMemory = new Set();
 let dedupStore = {};
 let dedupDirty = false;
 
-// Debounced async flush — never blocks the event loop on every message
 let _dedupFlushTimer = null;
 function scheduleDedupFlush() {
   if (_dedupFlushTimer) return;
@@ -100,28 +95,59 @@ async function drainQueue() {
 
 /* ===================== SETTINGS ===================== */
 let prefixEnabled = true;
+let botShutdown   = false;   // when true, bot goes fully silent
 
-function saveSettings() {
-  const payload = JSON.stringify({ prefixEnabled }, null, 2);
-  fsp.writeFile(SETTINGS_FILE, payload).catch(e => console.error('[Settings] Write failed:', e.message));
+async function saveSettings() {
+  const payload = JSON.stringify({ prefixEnabled, botShutdown }, null, 2);
+  // Also mirror to local file as a fast cache
+  fsp.writeFile('./settings.json', payload).catch(() => {});
+  try {
+    const ch = await client.channels.fetch(SETTINGS_CHANNEL).catch(() => null);
+    if (!ch) return;
+    // Wipe all existing messages in the channel first
+    let fetched;
+    do {
+      fetched = await ch.messages.fetch({ limit: 100 });
+      if (fetched.size === 0) break;
+      for (const m of fetched.values()) await m.delete().catch(() => {});
+    } while (fetched.size >= 2);
+    // Post fresh settings
+    await ch.send({
+      content: `Last updated: <t:${Math.floor(Date.now() / 1000)}:F>`,
+      files: [new AttachmentBuilder(Buffer.from(payload, 'utf8'), { name: 'settings.json' })]
+    });
+    console.log('[Settings] Pushed to Discord.');
+  } catch (e) { console.error('[Settings] Discord push failed:', e.message); }
 }
 
-function loadSettings() {
+async function loadSettings() {
+  // Try Discord channel first
   try {
-    if (fs.existsSync(SETTINGS_FILE)) {
-      const raw = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
-      if (typeof raw.prefixEnabled === 'boolean') prefixEnabled = raw.prefixEnabled;
-      console.log(`[Settings] Loaded — prefixEnabled: ${prefixEnabled}`);
+    const ch = await client.channels.fetch(SETTINGS_CHANNEL).catch(() => null);
+    if (ch) {
+      const msgs = await ch.messages.fetch({ limit: 20 });
+      const msg  = msgs.find(m => m.attachments.some(a => a.name === 'settings.json'));
+      if (msg) {
+        const raw = await (await fetch(msg.attachments.find(a => a.name === 'settings.json').url)).json();
+        if (typeof raw.prefixEnabled === 'boolean') prefixEnabled = raw.prefixEnabled;
+        if (typeof raw.botShutdown   === 'boolean') botShutdown   = raw.botShutdown;
+        console.log(`[Settings] Loaded from Discord — prefixEnabled: ${prefixEnabled}, botShutdown: ${botShutdown}`);
+        return;
+      }
     }
-  } catch (e) { console.warn('[Settings] Load failed:', e.message); }
+  } catch (e) { console.warn('[Settings] Discord load failed:', e.message); }
+  // Fall back to local file
+  try {
+    if (fs.existsSync('./settings.json')) {
+      const raw = JSON.parse(fs.readFileSync('./settings.json', 'utf8'));
+      if (typeof raw.prefixEnabled === 'boolean') prefixEnabled = raw.prefixEnabled;
+      if (typeof raw.botShutdown   === 'boolean') botShutdown   = raw.botShutdown;
+      console.log(`[Settings] Loaded from local file — prefixEnabled: ${prefixEnabled}, botShutdown: ${botShutdown}`);
+    }
+  } catch (e) { console.warn('[Settings] Local load failed:', e.message); }
 }
 
 /* ===================== DATA ===================== */
-/**
- * O(1) indexes for player lookups — maintained alongside data.players.
- *   nameIndex:     lowercase display name → player object
- *   usernameIndex: lowercase username     → player object
- */
 let data = {
   players:         new Map(),
   nameIndex:       new Map(),
@@ -129,6 +155,7 @@ let data = {
   priority:        new Set(),
   clans:           new Set(),
   bannedUsers:     new Set(),
+  hardBannedUsers: new Map(),   // userId → { message, gif }
   backupMessageId: null,
   listMessages:    { players: [], priority: [], clans: [] },
   panelMessages:   { gif: null, tutorial: null },
@@ -199,7 +226,6 @@ function sortData() {
   data.clans    = new Set([...data.clans].sort(alpha));
 }
 
-/** O(1) player lookup via indexes */
 function findPlayer(identifier) {
   const id = identifier.toLowerCase();
   const byName = data.nameIndex.get(id);
@@ -211,31 +237,21 @@ function findPlayer(identifier) {
   return null;
 }
 
-/** Returns all players sharing a display name (handles duplicates) */
 function findPlayersByName(nameLower) {
   const exact = data.nameIndex.get(nameLower);
   if (!exact) return [];
   return [...data.players.values()].filter(p => p.name.toLowerCase() === nameLower);
 }
 
-/**
- * Checks whether a name+username combo would conflict with any existing player.
- * Pass excludeKey to skip the player currently being edited.
- * Returns an error string if there's a conflict, or null if clear.
- */
 function checkPlayerConflict(name, username, excludeKey = null) {
   const nameLower = name ? name.toLowerCase() : null;
   const userLower = username ? username.toLowerCase() : null;
 
   for (const [key, p] of data.players.entries()) {
     if (excludeKey && key === excludeKey) continue;
-
-    // Duplicate username — always a hard conflict
     if (userLower && p.username && p.username.toLowerCase() === userLower) {
       return `Username **${p.username}** is already taken by **${p.name}**.`;
     }
-
-    // Same display name with no username on either side — ambiguous, block it
     if (nameLower && p.name.toLowerCase() === nameLower && !p.username && !username) {
       return `A player named **${p.name}** already exists with no username. Add a username to distinguish them, or use a different name.`;
     }
@@ -251,6 +267,7 @@ function buildPayload() {
     priority:        [...data.priority],
     clans:           [...data.clans],
     bannedUsers:     [...data.bannedUsers],
+    hardBannedUsers: Object.fromEntries(data.hardBannedUsers),
     backupMessageId: data.backupMessageId,
     listMessages:    data.listMessages,
     panelMessages:   data.panelMessages,
@@ -267,15 +284,11 @@ function parseRaw(raw) {
     data.players.set(uname || p.name, player);
   });
   data.priority = new Set();
-  // Sanitize legacy priority keys — strip @ prefix, resolve "username : name" or "name : username" to just the display name
   const sanitizePriorityKey = (u) => {
     if (!u) return null;
     u = u.trim();
-    // Strip leading @ (e.g. "@username")
     if (u.startsWith('@')) u = u.slice(1).trim();
-    // Strip inline @username suffix (e.g. "Rekt @primalflick2024" → "Rekt")
     if (u.includes(' @')) u = u.split(' @')[0].trim();
-    // Strip " : username" suffix (e.g. "name : username" → "name")
     if (u.includes(' : ')) u = u.split(' : ')[0].trim();
     return u || null;
   };
@@ -287,10 +300,11 @@ function parseRaw(raw) {
     const k = sanitizePriorityKey(u);
     if (k) data.priority.add(k);
   }
-  data.clans           = new Set(raw.clans       || []);
-  data.bannedUsers     = new Set(raw.bannedUsers || []);
-  data.backupMessageId = raw.backupMessageId     || null;
-  data.ownerRoleId     = raw.ownerRoleId         || null;
+  data.clans           = new Set(raw.clans        || []);
+  data.bannedUsers     = new Set(raw.bannedUsers   || []);
+  data.hardBannedUsers = new Map(Object.entries(raw.hardBannedUsers || {}));
+  data.backupMessageId = raw.backupMessageId       || null;
+  data.ownerRoleId     = raw.ownerRoleId           || null;
   const msgs = raw.listMessages || raw.messages || {};
   data.listMessages = {
     players:  Array.isArray(msgs.players)  ? msgs.players  : (msgs.players  ? [msgs.players]  : []),
@@ -299,7 +313,7 @@ function parseRaw(raw) {
   };
   data.panelMessages = raw.panelMessages || data.panelMessages;
   data.revision      = raw.revision      || 0;
-  rebuildIndexes(); // must come before priority resolution so indexes are available
+  rebuildIndexes();
   deduplicatePlayers();
   data.priority = resolvePriority(data.priority);
   console.log('[Priority] Resolved:', [...data.priority].join(', '));
@@ -337,7 +351,6 @@ let _pendingChanges = 0;
 function saveData() {
   _pendingChanges++;
   if (_pendingChanges >= 10) { _pendingChanges = 0; pushBackup(); return; }
-  // Async write — never blocks the event loop
   fsp.writeFile(DATA_FILE, buildPayload()).catch(e => console.error('[Save]', e.message));
 }
 
@@ -368,6 +381,7 @@ function getAvatarURL(user) {
 }
 
 async function sendLog(msg, action, color, fields) {
+  if (botShutdown) return;   // suppress all logs during shutdown
   try {
     const ch = await client.channels.fetch(LOGS_CHANNEL).catch(() => null);
     if (!ch) return;
@@ -383,12 +397,6 @@ async function sendLog(msg, action, color, fields) {
 }
 
 /* ===================== FORMATTERS ===================== */
-
-/**
- * Resolves a Set of priority keys to canonical display names.
- * Handles legacy formats: raw username, "@username", "Name @username", "name : username".
- * Deduplicates case-insensitively.
- */
 function resolvePriority(prioritySet) {
   const resolved = new Set();
   const seen = new Set();
@@ -403,20 +411,14 @@ function resolvePriority(prioritySet) {
       if (!seen.has(byUser.name.toLowerCase())) { resolved.add(byUser.name); seen.add(byUser.name.toLowerCase()); }
       continue;
     }
-    // Clean orphan — just a name with no player record yet
     if (!seen.has(k.toLowerCase())) { resolved.add(k); seen.add(k.toLowerCase()); }
   }
   return resolved;
 }
 
-/**
- * Removes duplicate players from data.players (same name+username combo).
- * Also removes any player whose name already appears in another entry with same casing.
- * Called after any bulk load to guarantee no duplicates exist.
- */
 function deduplicatePlayers() {
-  const seenNames = new Map();     // lowercase name → first player seen
-  const seenUsernames = new Set(); // lowercase username
+  const seenNames = new Map();
+  const seenUsernames = new Set();
   const toDelete = [];
   for (const [key, p] of data.players.entries()) {
     const nl = p.name.toLowerCase();
@@ -615,7 +617,7 @@ This bot organizes LBG players and clans onto the KOS list for YX members.
 **Player Commands**
 \`^ka poison poisonrebuild\` – Add a player
 \`^kr poison \` – Remove a player
-\`^ke facial anonymous_vas00 (or -) poison poisonrebuild\` – Edit a player with no username (use \`-\` for no username)
+\`^ke facial anonymous_vas00 (or -) poison poisonrebuild\` – Edit a player (use \`-\` for no username)
 
 **Clan Commands**
 \`^kca YX EU\` – Add a clan
@@ -626,7 +628,7 @@ This bot organizes LBG players and clans onto the KOS list for YX members.
 \`^p poison \` – Promote a player to priority
 \`^pr poison\` – Remove a player from priority
 \`^pa poison\` – Add player directly to priority
-\`^pe facial anonymous_vas00 (or -) poison poisonrebuild\` – Edit a priority player with no username (use \`-\` for no username)
+\`^pe facial anonymous_vas00 (or -) poison poisonrebuild\` – Edit a priority player (use \`-\` for no username)
 
 Thank you for being a part of YX!
   `);
@@ -645,11 +647,17 @@ client.on('messageCreate', msg => {
   if (msg.author.bot) return;
   if (!msg.content.startsWith('^')) return;
 
-  // Fast-reject: only handle known commands
   const cmd = msg.content.trim().split(/\s+/)[0].toLowerCase();
   if (!VALID_COMMANDS.has(cmd)) return;
 
-  // /disable blocks ALL non-owner, non-priority-role prefix commands before they touch the queue.
+  // During shutdown: respond with "no", delete both messages, do nothing else
+  if (botShutdown) {
+    msg.channel.send(`<@${msg.author.id}> no`)
+      .then(m => setTimeout(() => { m.delete().catch(() => {}); msg.delete().catch(() => {}); }, 3000))
+      .catch(() => {});
+    return;
+  }
+
   if (!prefixEnabled && msg.author.id !== OWNER_ID && !msg.member?.roles.cache.has(PRIORITY_ROLE_ID)) {
     msg.channel.send(`<@${msg.author.id}> Commands are currently disabled. Please wait while fixes are being applied.`)
       .then(m => setTimeout(() => { m.delete().catch(() => {}); msg.delete().catch(() => {}); }, 5000))
@@ -664,10 +672,28 @@ async function handleCommand(msg) {
   const args = msg.content.trim().split(/\s+/);
   const cmd  = args.shift().toLowerCase();
 
-  if (msg.author.id === SPECIAL_USER_ID) {
-    await msg.channel.send(`<@${msg.author.id}> fuck u kid`);
-    await msg.channel.send(SPECIAL_GIF_URL);
+  // Hard-banned users get their custom message + gif, then everything is deleted after a delay
+  if (data.hardBannedUsers.has(msg.author.id)) {
+    const { message, gif } = data.hardBannedUsers.get(msg.author.id);
+    const m1 = await msg.channel.send(`<@${msg.author.id}> ${message}`).catch(() => null);
+    const m2 = await msg.channel.send(gif).catch(() => null);
     msg.delete().catch(() => {});
+    setTimeout(() => {
+      m1?.delete().catch(() => {});
+      m2?.delete().catch(() => {});
+    }, 7000);
+    return;
+  }
+
+  // Special user — sends insult + gif then cleans up
+  if (msg.author.id === SPECIAL_USER_ID) {
+    const m1 = await msg.channel.send(`<@${msg.author.id}> fuck u kid`).catch(() => null);
+    const m2 = await msg.channel.send(SPECIAL_GIF_URL).catch(() => null);
+    msg.delete().catch(() => {});
+    setTimeout(() => {
+      m1?.delete().catch(() => {});
+      m2?.delete().catch(() => {});
+    }, 7000);
     return;
   }
 
@@ -810,10 +836,6 @@ async function handleCommand(msg) {
     return;
   }
 
-  // Shared arg parser for ^ke / ^pe — 4-arg only.
-  // Format: ^ke <oldname> <oldusername|-> <newname> [newusername]
-  // Use "-" for oldusername if the player has no username.
-  // Omit or use "-" for newusername to leave it blank.
   function resolveEditArgs(a) {
     if (a.length >= 4) {
       return {
@@ -827,7 +849,6 @@ async function handleCommand(msg) {
   }
 
   // ---------- ^ke ----------
-  // Format: ^ke <oldname> <oldusername|-> <newname> [newusername]
   if (cmd === '^ke') {
     const ea = resolveEditArgs(args);
     if (!ea || !ea.oldName || !ea.newName) {
@@ -1057,7 +1078,6 @@ async function handleCommand(msg) {
     }
 
     // ---------- ^pe ----------
-    // Format: ^pe <oldname> <oldusername|-> <newname> [newusername]
     if (cmd === '^pe') {
       const ea = resolveEditArgs(args);
       if (!ea || !ea.oldName || !ea.newName) {
@@ -1134,17 +1154,40 @@ client.on('interactionCreate', async i => {
   if (!i.isChatInputCommand()) return;
   if (!isOwner(i)) return i.reply({ content: '❌ You are not the owner.', flags: 64 });
 
-  if (i.commandName === 'enable')  {
+  // ---------- /shutdown ----------
+  if (i.commandName === 'shutdown') {
+    botShutdown = true;
+    await i.deferReply({ flags: 64 });
+    await saveSettings();
+    return i.editReply({ content: '⛔ Bot is now **shut down**. All commands and logs are silenced.' });
+  }
+
+  // ---------- /start ----------
+  if (i.commandName === 'start') {
+    botShutdown = false;
+    await i.deferReply({ flags: 64 });
+    await saveSettings();
+    return i.editReply({ content: '✅ Bot is now **started**. All commands and logs are active.' });
+  }
+
+  // Block all other slash commands while shut down (except /start above)
+  if (botShutdown) {
+    return i.reply({ content: '⛔ Bot is currently shut down. Use `/start` to bring it back online.', flags: 64 });
+  }
+
+  if (i.commandName === 'enable') {
     prefixEnabled = true;
-    saveSettings();
+    await i.deferReply({ flags: 64 });
+    await saveSettings();
     await pushBackup();
-    return i.reply({ content: '✅ Prefix commands **enabled**.', flags: 64 });
+    return i.editReply({ content: '✅ Prefix commands **enabled**.' });
   }
   if (i.commandName === 'disable') {
     prefixEnabled = false;
-    saveSettings();
+    await i.deferReply({ flags: 64 });
+    await saveSettings();
     await pushBackup();
-    return i.reply({ content: '🔴 Prefix commands **disabled**.', flags: 64 });
+    return i.editReply({ content: '🔴 Prefix commands **disabled**.' });
   }
 
   if (i.commandName === 'backup') {
@@ -1242,6 +1285,59 @@ client.on('interactionCreate', async i => {
     } catch {}
     return i.reply({ content: `✅ **${target.username}** unbanned.`, flags: 64 });
   }
+
+  // ---------- /hardban ----------
+  if (i.commandName === 'hardban') {
+    const target  = i.options.getUser('user');
+    const message = i.options.getString('message');
+    const gif     = i.options.getString('gif');
+
+    if (target.id === OWNER_ID) return i.reply({ content: '❌ Cannot hardban the bot owner.', flags: 64 });
+    if (data.hardBannedUsers.has(target.id)) return i.reply({ content: `⚠️ ${target.username} is already hardbanned.`, flags: 64 });
+
+    data.hardBannedUsers.set(target.id, { message, gif });
+    data.bannedUsers.add(target.id);   // also covers standard ban checks
+    saveData();
+    await pushBackup();
+
+    try {
+      const ch = await client.channels.fetch(LOGS_CHANNEL).catch(() => null);
+      if (ch) await ch.send({ embeds: [new EmbedBuilder().setColor(LOG_COLORS.BAN)
+        .setAuthor({ name: `${i.user.username} (${i.user.id})`, iconURL: getAvatarURL(i.user) })
+        .setTitle('🔨 User Hardbanned')
+        .addFields(
+          { name: 'User',    value: `${target.username} (${target.id})`, inline: true  },
+          { name: 'Message', value: message,                             inline: false },
+          { name: 'GIF',     value: gif,                                 inline: false }
+        )
+        .setTimestamp()
+      ]}).catch(() => {});
+    } catch {}
+
+    return i.reply({ content: `🔨 **${target.username}** hardbanned.`, flags: 64 });
+  }
+
+  // ---------- /unhardban ----------
+  if (i.commandName === 'unhardban') {
+    const target = i.options.getUser('user');
+    if (!data.hardBannedUsers.has(target.id)) return i.reply({ content: `⚠️ ${target.username} is not hardbanned.`, flags: 64 });
+    data.hardBannedUsers.delete(target.id);
+    data.bannedUsers.delete(target.id);
+    saveData();
+    await pushBackup();
+
+    try {
+      const ch = await client.channels.fetch(LOGS_CHANNEL).catch(() => null);
+      if (ch) await ch.send({ embeds: [new EmbedBuilder().setColor(LOG_COLORS.ADD)
+        .setAuthor({ name: `${i.user.username} (${i.user.id})`, iconURL: getAvatarURL(i.user) })
+        .setTitle('✅ User Un-Hardbanned')
+        .addFields({ name: 'User', value: `${target.username} (${target.id})`, inline: true })
+        .setTimestamp()
+      ]}).catch(() => {});
+    } catch {}
+
+    return i.reply({ content: `✅ **${target.username}** un-hardbanned.`, flags: 64 });
+  }
 });
 
 /* ===================== HEALTH-CHECK SERVER FOR RENDER ===================== */
@@ -1257,7 +1353,7 @@ require('http').createServer((req, res) => {
 client.once('ready', async () => {
   console.log(`[Bot] Logged in as ${client.user.tag}`);
   loadDedup();
-  loadSettings();
+  await loadSettings();
   await loadData();
   await reconcileListMessages();
   schedule24hBackup();
