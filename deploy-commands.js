@@ -2,7 +2,7 @@ require('dotenv').config();
 const { REST, Routes, SlashCommandBuilder } = require('discord.js');
 
 const CLIENT_ID = '1470922510496436378';
-const TOKEN = process.env.TOKEN;
+const TOKEN     = process.env.TOKEN;
 const GUILD_IDS = [
   '1412818267910705225',
   '1470930306596081699'
@@ -27,6 +27,12 @@ const commands = [
   new SlashCommandBuilder()
     .setName('disable')
     .setDescription('Disable prefix (^) commands'),
+  new SlashCommandBuilder()
+    .setName('shutdown')
+    .setDescription('Shut the bot down — prefix commands respond with "no", no actions or logs are processed'),
+  new SlashCommandBuilder()
+    .setName('start')
+    .setDescription('Bring the bot back online after a shutdown'),
   new SlashCommandBuilder()
     .setName('say')
     .setDescription('Make the bot send a message in this channel')
@@ -61,6 +67,36 @@ const commands = [
       option
         .setName('user')
         .setDescription('The user to unban')
+        .setRequired(true)
+    ),
+  new SlashCommandBuilder()
+    .setName('hardban')
+    .setDescription('Hardban a user — bot replies with a custom message and gif when they use a command')
+    .addUserOption(option =>
+      option
+        .setName('user')
+        .setDescription('The user to hardban')
+        .setRequired(true)
+    )
+    .addStringOption(option =>
+      option
+        .setName('message')
+        .setDescription('The message to send when they try to use a command')
+        .setRequired(true)
+    )
+    .addStringOption(option =>
+      option
+        .setName('gif')
+        .setDescription('The gif URL to send after the message')
+        .setRequired(true)
+    ),
+  new SlashCommandBuilder()
+    .setName('unhardban')
+    .setDescription('Remove a hardban from a user')
+    .addUserOption(option =>
+      option
+        .setName('user')
+        .setDescription('The user to un-hardban')
         .setRequired(true)
     )
 ];
