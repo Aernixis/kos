@@ -1360,4 +1360,6 @@ client.once('ready', async () => {
   console.log('[Bot] Ready.');
 });
 
-client.login(process.env.TOKEN);
+client.login(process.env.BOT_TOKEN)
+  .then(() => console.log('[Login] Token accepted, connecting...'))
+  .catch(err => console.error('[Login] FAILED:', err.message));
