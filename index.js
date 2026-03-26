@@ -1,13 +1,11 @@
-process.stdout.write('STARTUP\n');
-process.on('uncaughtException', err => console.error('[CRASH]', err));
-process.on('unhandledRejection', err => console.error('[REJECTION]', err));
-process.stdout.write('A\n');
-const fs = require('fs');
-process.stdout.write('B\n');
+const fs  = require('fs');
 const fsp = require('fs/promises');
-process.stdout.write('C\n');
 const { Client, GatewayIntentBits, Partials, EmbedBuilder, AttachmentBuilder } = require('discord.js');
-process.stdout.write('D\n');
+
+/* ===================== CRASH HANDLERS ===================== */
+process.on('uncaughtException',  err => console.error('[CRASH]',     err));
+process.on('unhandledRejection', err => console.error('[REJECTION]', err));
+
 /* ===================== CLIENT ===================== */
 const client = new Client({
   intents: [
@@ -31,7 +29,6 @@ const LOGS_CHANNEL       = '1473800222927880223';
 const BACKUP_CHANNEL     = '1475960780976292051';
 const DEDUP_TTL_MS       = 30_000;
 
-// Whitelist valid commands — fast-rejects unknown prefixed messages before queuing
 const VALID_COMMANDS = new Set(['^ka', '^kr', '^ke', '^kca', '^kcr', '^kce', '^p', '^pr', '^pa', '^pe']);
 
 /* ===================== INPUT SANITIZATION ===================== */
@@ -71,7 +68,6 @@ function claimMessage(msgId) {
   if (claimedMemory.has(msgId)) return false;
   claimedMemory.add(msgId);
   setTimeout(() => claimedMemory.delete(msgId), DEDUP_TTL_MS);
-
   const now = Date.now();
   if (dedupStore[msgId] && dedupStore[msgId] > now) return false;
   dedupStore[msgId] = now + DEDUP_TTL_MS;
@@ -100,23 +96,20 @@ async function drainQueue() {
 
 /* ===================== SETTINGS ===================== */
 let prefixEnabled = true;
-let botShutdown   = false;   // when true, bot goes fully silent
+let botShutdown   = false;
 
 async function saveSettings() {
   const payload = JSON.stringify({ prefixEnabled, botShutdown }, null, 2);
-  // Also mirror to local file as a fast cache
   fsp.writeFile('./settings.json', payload).catch(() => {});
   try {
     const ch = await client.channels.fetch(SETTINGS_CHANNEL).catch(() => null);
     if (!ch) return;
-    // Wipe all existing messages in the channel first
     let fetched;
     do {
       fetched = await ch.messages.fetch({ limit: 100 });
       if (fetched.size === 0) break;
       for (const m of fetched.values()) await m.delete().catch(() => {});
     } while (fetched.size >= 2);
-    // Post fresh settings
     await ch.send({
       content: `Last updated: <t:${Math.floor(Date.now() / 1000)}:F>`,
       files: [new AttachmentBuilder(Buffer.from(payload, 'utf8'), { name: 'settings.json' })]
@@ -126,7 +119,6 @@ async function saveSettings() {
 }
 
 async function loadSettings() {
-  // Try Discord channel first
   try {
     const ch = await client.channels.fetch(SETTINGS_CHANNEL).catch(() => null);
     if (ch) {
@@ -141,7 +133,6 @@ async function loadSettings() {
       }
     }
   } catch (e) { console.warn('[Settings] Discord load failed:', e.message); }
-  // Fall back to local file
   try {
     if (fs.existsSync('./settings.json')) {
       const raw = JSON.parse(fs.readFileSync('./settings.json', 'utf8'));
@@ -160,7 +151,7 @@ let data = {
   priority:        new Set(),
   clans:           new Set(),
   bannedUsers:     new Set(),
-  hardBannedUsers: new Map(),   // userId → { message, gif }
+  hardBannedUsers: new Map(),
   backupMessageId: null,
   listMessages:    { players: [], priority: [], clans: [] },
   panelMessages:   { gif: null, tutorial: null },
@@ -251,15 +242,12 @@ function findPlayersByName(nameLower) {
 function checkPlayerConflict(name, username, excludeKey = null) {
   const nameLower = name ? name.toLowerCase() : null;
   const userLower = username ? username.toLowerCase() : null;
-
   for (const [key, p] of data.players.entries()) {
     if (excludeKey && key === excludeKey) continue;
-    if (userLower && p.username && p.username.toLowerCase() === userLower) {
+    if (userLower && p.username && p.username.toLowerCase() === userLower)
       return `Username **${p.username}** is already taken by **${p.name}**.`;
-    }
-    if (nameLower && p.name.toLowerCase() === nameLower && !p.username && !username) {
+    if (nameLower && p.name.toLowerCase() === nameLower && !p.username && !username)
       return `A player named **${p.name}** already exists with no username. Add a username to distinguish them, or use a different name.`;
-    }
   }
   return null;
 }
@@ -297,10 +285,7 @@ function parseRaw(raw) {
     if (u.includes(' : ')) u = u.split(' : ')[0].trim();
     return u || null;
   };
-  const rawPriorityKeys = [
-    ...(raw.topPriority || []),
-    ...(raw.priority    || [])
-  ];
+  const rawPriorityKeys = [...(raw.topPriority || []), ...(raw.priority || [])];
   for (const u of rawPriorityKeys) {
     const k = sanitizePriorityKey(u);
     if (k) data.priority.add(k);
@@ -386,7 +371,7 @@ function getAvatarURL(user) {
 }
 
 async function sendLog(msg, action, color, fields) {
-  if (botShutdown) return;   // suppress all logs during shutdown
+  if (botShutdown) return;
   try {
     const ch = await client.channels.fetch(LOGS_CHANNEL).catch(() => null);
     if (!ch) return;
@@ -486,18 +471,15 @@ async function reconcileListMessages() {
   if (!channel) return;
   const fetched = await channel.messages.fetch({ limit: 100 }).catch(() => null);
   if (!fetched) return;
-
   const botMsgs = [...fetched.values()]
     .filter(m => m.author.id === client.user.id && m.content.startsWith('```'))
     .sort((a, b) => a.createdTimestamp - b.createdTimestamp);
-
   const found = { players: [], priority: [], clans: [] };
   for (const m of botMsgs) {
     for (const [key, header] of Object.entries(SECTION_HEADER)) {
       if (m.content.includes(header)) { found[key].push(m.id); break; }
     }
   }
-
   let changed = false;
   for (const key of ['players', 'priority', 'clans']) {
     if (found[key].length > 1) {
@@ -537,21 +519,17 @@ function splitIntoChunks(title, content, marker) {
 async function updateKosList(sectionsArg = null, forceCreate = false) {
   const channel = await client.channels.fetch(SUBMISSION_CHANNEL).catch(() => null);
   if (!channel) { console.error('[updateKosList] Cannot fetch SUBMISSION_CHANNEL'); return; }
-
   const keys = sectionsArg
     ? (Array.isArray(sectionsArg) ? sectionsArg : [sectionsArg])
     : ['players', 'priority', 'clans'];
-
   bumpRev();
   const marker = revMarker();
-
   await Promise.all(keys.map(async key => {
     if (!SECTION_FORMAT[key]) return;
     const release = await acquireSectionLock(key);
     try {
       const chunks    = splitIntoChunks(SECTION_HEADER[key], SECTION_FORMAT[key](), marker);
       const storedIds = [...(data.listMessages[key] || [])];
-
       if (forceCreate) {
         for (const id of storedIds) {
           const m = await channel.messages.fetch(id).catch(() => null);
@@ -566,21 +544,14 @@ async function updateKosList(sectionsArg = null, forceCreate = false) {
         console.log(`[updateKosList] forceCreate "${key}" → ${newIds.length} message(s)`);
         return;
       }
-
-      if (storedIds.length === 0) {
-        console.warn(`[updateKosList] No IDs for "${key}" — run /list`);
-        return;
-      }
-
+      if (storedIds.length === 0) { console.warn(`[updateKosList] No IDs for "${key}" — run /list`); return; }
       const verified = (await Promise.all(storedIds.map(id => channel.messages.fetch(id).catch(() => null))))
         .map((m, i) => m ? storedIds[i] : null).filter(Boolean);
-
       if (verified.length === 0) {
         console.warn(`[updateKosList] "${key}" messages gone — run /list`);
         data.listMessages[key] = [];
         return;
       }
-
       let slotted;
       if (chunks.length <= verified.length) {
         slotted = chunks;
@@ -590,7 +561,6 @@ async function updateKosList(sectionsArg = null, forceCreate = false) {
           .map(c => c.replace(/^```[^\n]*\n/, '').replace(/\n```[\u200B]*$/, '')).join('\n');
         slotted.push(`\`\`\`${SECTION_HEADER[key]}\n${overflow}\n\`\`\`${marker}`);
       }
-
       await Promise.all(verified.map(async (id, i) => {
         const m = await channel.messages.fetch(id).catch(() => null);
         if (!m) { console.warn(`[updateKosList] Slot ${i} for "${key}" vanished during edit`); return; }
@@ -599,14 +569,12 @@ async function updateKosList(sectionsArg = null, forceCreate = false) {
           await m.edit(newContent).catch(e => console.error(`[updateKosList] edit failed for "${key}" slot ${i}:`, e.message));
         }
       }));
-
       data.listMessages[key] = verified;
       console.log(`[updateKosList] Updated "${key}" across ${verified.length} message(s)`);
     } finally {
       release();
     }
   }));
-
   saveData();
 }
 
@@ -651,25 +619,20 @@ client.on('messageCreate', msg => {
   if (!claimMessage(msg.id)) return;
   if (msg.author.bot) return;
   if (!msg.content.startsWith('^')) return;
-
   const cmd = msg.content.trim().split(/\s+/)[0].toLowerCase();
   if (!VALID_COMMANDS.has(cmd)) return;
-
-  // During shutdown: respond with "no", delete both messages, do nothing else
   if (botShutdown) {
     msg.channel.send(`<@${msg.author.id}> no`)
       .then(m => setTimeout(() => { m.delete().catch(() => {}); msg.delete().catch(() => {}); }, 3000))
       .catch(() => {});
     return;
   }
-
   if (!prefixEnabled && msg.author.id !== OWNER_ID && !msg.member?.roles.cache.has(PRIORITY_ROLE_ID)) {
     msg.channel.send(`<@${msg.author.id}> Commands are currently disabled. Please wait while fixes are being applied.`)
       .then(m => setTimeout(() => { m.delete().catch(() => {}); msg.delete().catch(() => {}); }, 5000))
       .catch(() => {});
     return;
   }
-
   enqueueCommand(() => handleCommand(msg));
 });
 
@@ -677,28 +640,20 @@ async function handleCommand(msg) {
   const args = msg.content.trim().split(/\s+/);
   const cmd  = args.shift().toLowerCase();
 
-  // Hard-banned users get their custom message + gif, then everything is deleted after a delay
   if (data.hardBannedUsers.has(msg.author.id)) {
     const { message, gif } = data.hardBannedUsers.get(msg.author.id);
     const m1 = await msg.channel.send(`<@${msg.author.id}> ${message}`).catch(() => null);
     const m2 = await msg.channel.send(gif).catch(() => null);
     msg.delete().catch(() => {});
-    setTimeout(() => {
-      m1?.delete().catch(() => {});
-      m2?.delete().catch(() => {});
-    }, 7000);
+    setTimeout(() => { m1?.delete().catch(() => {}); m2?.delete().catch(() => {}); }, 7000);
     return;
   }
 
-  // Special user — sends insult + gif then cleans up
   if (msg.author.id === SPECIAL_USER_ID) {
     const m1 = await msg.channel.send(`<@${msg.author.id}> fuck u kid`).catch(() => null);
     const m2 = await msg.channel.send(SPECIAL_GIF_URL).catch(() => null);
     msg.delete().catch(() => {});
-    setTimeout(() => {
-      m1?.delete().catch(() => {});
-      m2?.delete().catch(() => {});
-    }, 7000);
+    setTimeout(() => { m1?.delete().catch(() => {}); m2?.delete().catch(() => {}); }, 7000);
     return;
   }
 
@@ -717,7 +672,6 @@ async function handleCommand(msg) {
     const name     = sanitizeInput(args[0]);
     const username = sanitizeInput(args[1]) || null;
     if (!name) { await reply(msg, 'Missing or invalid name.'); return; }
-
     const conflict = checkPlayerConflict(name, username);
     if (conflict) {
       await Promise.all([
@@ -730,7 +684,6 @@ async function handleCommand(msg) {
       ]);
       return;
     }
-
     const key = username || name;
     if (data.players.has(key)) {
       await Promise.all([
@@ -743,15 +696,13 @@ async function handleCommand(msg) {
       ]);
       return;
     }
-
     const player = { name, username, addedBy: msg.author.id };
     data.players.set(key, player);
     indexAdd(player);
     const wasInPriority = [...data.priority].some(k => k.toLowerCase() === name.toLowerCase());
     for (const k of [...data.priority]) { if (k.toLowerCase() === name.toLowerCase()) data.priority.delete(k); }
-    const kaSections = wasInPriority ? ['players', 'priority'] : ['players'];
     await Promise.all([
-      updateKosList(kaSections),
+      updateKosList(wasInPriority ? ['players', 'priority'] : ['players']),
       sendLog(msg, '✅ Player Added', LOG_COLORS.ADD, [
         { name: 'Name',     value: name,              inline: true },
         { name: 'Username', value: username || 'N/A', inline: true },
@@ -768,7 +719,6 @@ async function handleCommand(msg) {
     const usernameArg = sanitizeInput(args[1]) || null;
     if (!identifier) { await reply(msg, 'Missing name.'); return; }
     let playerCheck = null;
-
     if (usernameArg) {
       playerCheck = data.usernameIndex.get(usernameArg.toLowerCase()) || null;
       if (!playerCheck) {
@@ -796,17 +746,13 @@ async function handleCommand(msg) {
           return;
         }
       } else if (byName.length > 1) {
-        await reply(msg,
-          `${byName.length} players found with display name **${identifier}**. Please specify a username: \`^kr ${identifier} <username>\``,
-          6000
-        ); return;
+        await reply(msg, `${byName.length} players found with display name **${identifier}**. Please specify a username: \`^kr ${identifier} <username>\``, 6000);
+        return;
       } else {
         playerCheck = byName[0];
       }
     }
-
     if (!playerCheck) return;
-
     if (!playerCheck._orphaned && playerCheck.addedBy !== msg.author.id && msg.author.id !== OWNER_ID && !canUsePriority(msg)) {
       await Promise.all([
         sendLog(msg, '⛔ Remove Player — Permission Denied', LOG_COLORS.ERROR, [
@@ -817,20 +763,17 @@ async function handleCommand(msg) {
       ]);
       return;
     }
-
-    const removeKey = playerKey(playerCheck);
+    const removeKey      = playerKey(playerCheck);
     const removeKeyLower = removeKey.toLowerCase();
-    const actualKey = [...data.players.keys()].find(k => k.toLowerCase() === removeKeyLower) || removeKey;
-    const removed   = data.players.get(actualKey);
+    const actualKey      = [...data.players.keys()].find(k => k.toLowerCase() === removeKeyLower) || removeKey;
+    const removed        = data.players.get(actualKey);
     if (removed) { data.players.delete(actualKey); indexRemove(removed); }
     const krNameLower   = (removed || playerCheck).name.toLowerCase();
     const wasInPriority = [...data.priority].some(k => k.toLowerCase() === krNameLower);
     for (const k of [...data.priority]) { if (k.toLowerCase() === krNameLower) data.priority.delete(k); }
-    const krSections = wasInPriority ? ['players', 'priority'] : ['players'];
-
     const primary = removed || playerCheck;
     await Promise.all([
-      updateKosList(krSections),
+      updateKosList(wasInPriority ? ['players', 'priority'] : ['players']),
       sendLog(msg, '🗑️ Player Removed', LOG_COLORS.REMOVE, [
         { name: 'Name',     value: primary.name,              inline: true },
         { name: 'Username', value: primary.username || 'N/A', inline: true },
@@ -856,10 +799,7 @@ async function handleCommand(msg) {
   // ---------- ^ke ----------
   if (cmd === '^ke') {
     const ea = resolveEditArgs(args);
-    if (!ea || !ea.oldName || !ea.newName) {
-      await reply(msg, 'Usage: `^ke <oldname> <oldusername|-> <newname> [newusername]`', 6000); return;
-    }
-
+    if (!ea || !ea.oldName || !ea.newName) { await reply(msg, 'Usage: `^ke <oldname> <oldusername|-> <newname> [newusername]`', 6000); return; }
     let target = null;
     if (ea.oldUser) {
       target = data.usernameIndex.get(ea.oldUser.toLowerCase()) || null;
@@ -869,29 +809,20 @@ async function handleCommand(msg) {
       else if (matches.length > 1) { await reply(msg, `Multiple players named **${ea.oldName}**. Specify username.`, 6000); return; }
       else target = findPlayer(ea.oldName);
     }
-
     if (!target || target._orphaned) { await reply(msg, 'Player not found.'); return; }
-    if (target.addedBy !== msg.author.id && msg.author.id !== OWNER_ID && !canUsePriority(msg)) {
-      await reply(msg, "You didn't add this player."); return;
-    }
-
+    if (target.addedBy !== msg.author.id && msg.author.id !== OWNER_ID && !canUsePriority(msg)) { await reply(msg, "You didn't add this player."); return; }
     const oldKey        = playerKey(target);
     const conflict      = checkPlayerConflict(ea.newName, ea.newUser, oldKey);
     if (conflict) { await reply(msg, conflict, 6000); return; }
-
     const keNameLower   = target.name.toLowerCase();
     const wasInPriority = [...data.priority].some(k => k.toLowerCase() === keNameLower);
     indexRemove(target);
     data.players.delete(oldKey);
-    if (wasInPriority) {
-      for (const k of [...data.priority]) { if (k.toLowerCase() === keNameLower) data.priority.delete(k); }
-    }
-
+    if (wasInPriority) { for (const k of [...data.priority]) { if (k.toLowerCase() === keNameLower) data.priority.delete(k); } }
     const updated = { name: ea.newName, username: ea.newUser, addedBy: target.addedBy };
     data.players.set(playerKey(updated), updated);
     indexAdd(updated);
     if (wasInPriority) data.priority.add(ea.newName);
-
     await Promise.all([
       updateKosList(wasInPriority ? ['players', 'priority'] : ['players']),
       sendLog(msg, '✏️ Player Edited', LOG_COLORS.EDIT, [
@@ -976,10 +907,8 @@ async function handleCommand(msg) {
     const newRegion = sanitizeInput(args[3]);
     if (!oldName || !oldRegion) { await reply(msg, 'Usage: `^kce <oldname> <oldregion> <newname> <newregion>`'); return; }
     if (!newName || !newRegion) { await reply(msg, 'Missing new name/region. Usage: `^kce <oldname> <oldregion> <newname> <newregion>`'); return; }
-
     const oldClan = `${oldRegion.toUpperCase()}»${oldName.toUpperCase()}`;
     const newClan = `${newRegion.toUpperCase()}»${newName.toUpperCase()}`;
-
     if (!data.clans.has(oldClan)) {
       await Promise.all([
         sendLog(msg, '⚠️ Edit Clan — Not Found', LOG_COLORS.ERROR, [
@@ -990,11 +919,7 @@ async function handleCommand(msg) {
       ]);
       return;
     }
-
-    if (oldClan !== newClan && data.clans.has(newClan)) {
-      await reply(msg, `Clan already exists: ${newClan}`); return;
-    }
-
+    if (oldClan !== newClan && data.clans.has(newClan)) { await reply(msg, `Clan already exists: ${newClan}`); return; }
     data.clans.delete(oldClan);
     data.clans.add(newClan);
     await Promise.all([
@@ -1018,19 +943,14 @@ async function handleCommand(msg) {
       const name     = sanitizeInput(args[0]);
       const username = sanitizeInput(args[1]) || null;
       if (!name) { await reply(msg, 'Missing name.'); return; }
-
       const conflict = checkPlayerConflict(name, username);
       if (conflict) { await reply(msg, conflict, 6000); return; }
-
       const key = username || name;
       if (data.players.has(key)) { await reply(msg, `Player already exists: ${key}`); return; }
-
       const player = { name, username, addedBy: msg.author.id };
       data.players.set(key, player);
       indexAdd(player);
-      if (![...data.priority].some(k => k.toLowerCase() === name.toLowerCase())) {
-        data.priority.add(name);
-      }
+      if (![...data.priority].some(k => k.toLowerCase() === name.toLowerCase())) data.priority.add(name);
       await Promise.all([
         updateKosList(['players', 'priority']),
         sendLog(msg, '⭐ Player Added to Priority (Direct)', LOG_COLORS.PRIORITY, [
@@ -1050,9 +970,7 @@ async function handleCommand(msg) {
 
     // ---------- ^p ----------
     if (cmd === '^p') {
-      if ([...data.priority].some(k => k.toLowerCase() === player.name.toLowerCase())) {
-        await reply(msg, `${player.name} is already in priority.`); return;
-      }
+      if ([...data.priority].some(k => k.toLowerCase() === player.name.toLowerCase())) { await reply(msg, `${player.name} is already in priority.`); return; }
       data.priority.add(player.name);
       await Promise.all([
         updateKosList(['players', 'priority']),
@@ -1085,10 +1003,7 @@ async function handleCommand(msg) {
     // ---------- ^pe ----------
     if (cmd === '^pe') {
       const ea = resolveEditArgs(args);
-      if (!ea || !ea.oldName || !ea.newName) {
-        await reply(msg, 'Usage: `^pe <oldname> <oldusername|-> <newname> [newusername]`', 6000); return;
-      }
-
+      if (!ea || !ea.oldName || !ea.newName) { await reply(msg, 'Usage: `^pe <oldname> <oldusername|-> <newname> [newusername]`', 6000); return; }
       let peTarget = null;
       if (ea.oldUser) {
         peTarget = data.usernameIndex.get(ea.oldUser.toLowerCase()) || null;
@@ -1098,12 +1013,9 @@ async function handleCommand(msg) {
         else if (matches.length > 1) { await reply(msg, `Multiple players named **${ea.oldName}**. Specify username.`, 6000); return; }
         else peTarget = findPlayer(ea.oldName);
       }
-
       if (!peTarget) { await reply(msg, 'Player not found.'); return; }
-
       const conflict = checkPlayerConflict(ea.newName, ea.newUser, peTarget._orphaned ? null : playerKey(peTarget));
       if (conflict) { await reply(msg, conflict, 6000); return; }
-
       if (peTarget._orphaned) {
         const oldKey = peTarget.name;
         for (const k of [...data.priority]) { if (k.toLowerCase() === oldKey.toLowerCase()) data.priority.delete(k); }
@@ -1123,21 +1035,16 @@ async function handleCommand(msg) {
         ]);
         return;
       }
-
-      const oldKey      = playerKey(peTarget);
-      const peNameLower = peTarget.name.toLowerCase();
+      const oldKey        = playerKey(peTarget);
+      const peNameLower   = peTarget.name.toLowerCase();
       const wasInPriority = [...data.priority].some(k => k.toLowerCase() === peNameLower);
       indexRemove(peTarget);
       data.players.delete(oldKey);
-      if (wasInPriority) {
-        for (const k of [...data.priority]) { if (k.toLowerCase() === peNameLower) data.priority.delete(k); }
-      }
-
+      if (wasInPriority) { for (const k of [...data.priority]) { if (k.toLowerCase() === peNameLower) data.priority.delete(k); } }
       const updated = { name: ea.newName, username: ea.newUser, addedBy: peTarget.addedBy };
       data.players.set(playerKey(updated), updated);
       indexAdd(updated);
       if (wasInPriority) data.priority.add(ea.newName);
-
       await Promise.all([
         updateKosList(['players', 'priority']),
         sendLog(msg, '✏️ Priority Player Edited', LOG_COLORS.EDIT, [
@@ -1167,7 +1074,7 @@ client.on('interactionCreate', async i => {
     return i.editReply({ content: '⛔ Bot is now **shut down**. All commands and logs are silenced.' });
   }
 
-  // ---------- /start ----------
+  // ---------- /start ----------  (deferReply added to fix timeout)
   if (i.commandName === 'start') {
     botShutdown = false;
     await i.deferReply({ flags: 64 });
@@ -1175,7 +1082,6 @@ client.on('interactionCreate', async i => {
     return i.editReply({ content: '✅ Bot is now **started**. All commands and logs are active.' });
   }
 
-  // Block all other slash commands while shut down (except /start above)
   if (botShutdown) {
     return i.reply({ content: '⛔ Bot is currently shut down. Use `/start` to bring it back online.', flags: 64 });
   }
@@ -1187,6 +1093,7 @@ client.on('interactionCreate', async i => {
     await pushBackup();
     return i.editReply({ content: '✅ Prefix commands **enabled**.' });
   }
+
   if (i.commandName === 'disable') {
     prefixEnabled = false;
     await i.deferReply({ flags: 64 });
@@ -1291,20 +1198,16 @@ client.on('interactionCreate', async i => {
     return i.reply({ content: `✅ **${target.username}** unbanned.`, flags: 64 });
   }
 
-  // ---------- /hardban ----------
   if (i.commandName === 'hardban') {
     const target  = i.options.getUser('user');
     const message = i.options.getString('message');
     const gif     = i.options.getString('gif');
-
     if (target.id === OWNER_ID) return i.reply({ content: '❌ Cannot hardban the bot owner.', flags: 64 });
     if (data.hardBannedUsers.has(target.id)) return i.reply({ content: `⚠️ ${target.username} is already hardbanned.`, flags: 64 });
-
     data.hardBannedUsers.set(target.id, { message, gif });
-    data.bannedUsers.add(target.id);   // also covers standard ban checks
+    data.bannedUsers.add(target.id);
     saveData();
     await pushBackup();
-
     try {
       const ch = await client.channels.fetch(LOGS_CHANNEL).catch(() => null);
       if (ch) await ch.send({ embeds: [new EmbedBuilder().setColor(LOG_COLORS.BAN)
@@ -1314,15 +1217,12 @@ client.on('interactionCreate', async i => {
           { name: 'User',    value: `${target.username} (${target.id})`, inline: true  },
           { name: 'Message', value: message,                             inline: false },
           { name: 'GIF',     value: gif,                                 inline: false }
-        )
-        .setTimestamp()
+        ).setTimestamp()
       ]}).catch(() => {});
     } catch {}
-
     return i.reply({ content: `🔨 **${target.username}** hardbanned.`, flags: 64 });
   }
 
-  // ---------- /unhardban ----------
   if (i.commandName === 'unhardban') {
     const target = i.options.getUser('user');
     if (!data.hardBannedUsers.has(target.id)) return i.reply({ content: `⚠️ ${target.username} is not hardbanned.`, flags: 64 });
@@ -1330,7 +1230,6 @@ client.on('interactionCreate', async i => {
     data.bannedUsers.delete(target.id);
     saveData();
     await pushBackup();
-
     try {
       const ch = await client.channels.fetch(LOGS_CHANNEL).catch(() => null);
       if (ch) await ch.send({ embeds: [new EmbedBuilder().setColor(LOG_COLORS.ADD)
@@ -1340,7 +1239,6 @@ client.on('interactionCreate', async i => {
         .setTimestamp()
       ]}).catch(() => {});
     } catch {}
-
     return i.reply({ content: `✅ **${target.username}** un-hardbanned.`, flags: 64 });
   }
 });
@@ -1354,7 +1252,7 @@ require('http').createServer((req, res) => {
   res.end('OK');
 }).listen(process.env.PORT || 3000);
 
-/* ===================== LOGIN + LOAD ===================== */
+/* ===================== LOGIN ===================== */
 client.once('ready', async () => {
   console.log(`[Bot] Logged in as ${client.user.tag}`);
   loadDedup();
@@ -1365,6 +1263,19 @@ client.once('ready', async () => {
   console.log('[Bot] Ready.');
 });
 
+// Auto-restart if login hangs (common on Render free tier after spin-down)
+const loginTimeout = setTimeout(() => {
+  console.error('[Login] Timed out after 30s — restarting...');
+  process.exit(1);
+}, 30_000);
+
 client.login(process.env.BOT_TOKEN)
-  .then(() => console.log('[Login] Token accepted, connecting...'))
-  .catch(err => console.error('[Login] FAILED:', err.message));
+  .then(() => {
+    clearTimeout(loginTimeout);
+    console.log('[Login] Token accepted, connecting...');
+  })
+  .catch(err => {
+    clearTimeout(loginTimeout);
+    console.error('[Login] FAILED:', err.message);
+    process.exit(1);
+  });
