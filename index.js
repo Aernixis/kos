@@ -1271,6 +1271,10 @@ const loginTimeout = setTimeout(() => {
 
 console.log('[Env] BOT_TOKEN present:', !!process.env.BOT_TOKEN);
 console.log('[Env] Token prefix:', process.env.BOT_TOKEN?.slice(0, 10));
+fetch('https://discord.com/api/v10/gateway')
+  .then(r => r.json())
+  .then(d => console.log('[Gateway] Reachable:', d.url))
+  .catch(e => console.error('[Gateway] BLOCKED:', e.message));
 
 client.login(process.env.BOT_TOKEN)
   .then(() => {
