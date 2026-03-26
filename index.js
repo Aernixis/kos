@@ -1,3 +1,6 @@
+process.on('uncaughtException', err => console.error('[CRASH]', err));
+process.on('unhandledRejection', err => console.error('[REJECTION]', err));
+console.log('[Startup] Process started');
 require('dotenv').config();
 const fs = require('fs');
 const { Client, GatewayIntentBits, Partials, EmbedBuilder, AttachmentBuilder } = require('discord.js');
