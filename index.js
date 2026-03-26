@@ -1,4 +1,12 @@
 process.stdout.write('STARTUP\n');
+console.log('1 - before requires');
+require('dotenv').config();
+console.log('2 - dotenv done');
+const fs = require('fs');
+console.log('3 - fs done');
+const { Client, GatewayIntentBits, Partials, EmbedBuilder, AttachmentBuilder } = require('discord.js');
+console.log('4 - discord.js done');
+
 require('dotenv').config();
 const fs   = require('fs');
 const fsp  = require('fs/promises');
