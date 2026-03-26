@@ -1,3 +1,4 @@
+process.stdout.write('STARTUP\n');
 require('dotenv').config();
 const fs   = require('fs');
 const fsp  = require('fs/promises');
