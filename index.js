@@ -1,8 +1,6 @@
 process.stdout.write('STARTUP\n');
-console.log('1 - before requires');
-require('dotenv').config();
-console.log('2 - dotenv done');
-
+process.on('uncaughtException', err => console.error('[CRASH]', err));
+process.on('unhandledRejection', err => console.error('[REJECTION]', err));
 require('dotenv').config();
 const fs   = require('fs');
 const fsp  = require('fs/promises');
