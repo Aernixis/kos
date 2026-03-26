@@ -1,10 +1,13 @@
 process.stdout.write('STARTUP\n');
 process.on('uncaughtException', err => console.error('[CRASH]', err));
 process.on('unhandledRejection', err => console.error('[REJECTION]', err));
-const fs   = require('fs');
-const fsp  = require('fs/promises');
+process.stdout.write('A\n');
+const fs = require('fs');
+process.stdout.write('B\n');
+const fsp = require('fs/promises');
+process.stdout.write('C\n');
 const { Client, GatewayIntentBits, Partials, EmbedBuilder, AttachmentBuilder } = require('discord.js');
-
+process.stdout.write('D\n');
 /* ===================== CLIENT ===================== */
 const client = new Client({
   intents: [
