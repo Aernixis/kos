@@ -1,3 +1,7 @@
+const express = require('express')
+const app = express()
+app.get('/', (req, res) => res.send('Bot is alive!'))
+app.listen(3000)
 process.on('uncaughtException', err => console.error('[CRASH]', err));
 process.on('unhandledRejection', err => console.error('[REJECTION]', err));
 console.log('[Startup] Process started');
