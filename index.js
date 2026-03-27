@@ -442,7 +442,7 @@ Examples
 ^pr poison
 ^pa poison
 
-Thank you for being a part of YX!
+Thank you for being apart of YX!
     `);
   async function upsert(id, embed) {
     if (id) {
